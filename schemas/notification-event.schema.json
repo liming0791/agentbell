@@ -6,9 +6,14 @@
   "required": [
     "version",
     "source",
+    "surface",
+    "runtime",
     "event",
     "status",
-    "occurredAt"
+    "occurredAt",
+    "idempotencyKey",
+    "priority",
+    "privacyLevel"
   ],
   "properties": {
     "version": {
@@ -47,8 +52,15 @@
       ]
     },
     "event": {
-      "type": "string",
-      "minLength": 1
+      "enum": [
+        "task.completed",
+        "task.failed",
+        "agent.waiting",
+        "approval.required",
+        "session.interrupted",
+        "subagent.completed",
+        "agent.info"
+      ]
     },
     "status": {
       "enum": [
@@ -81,10 +93,8 @@
       ]
     },
     "idempotencyKey": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": "string",
+      "minLength": 1
     },
     "priority": {
       "enum": [
@@ -120,5 +130,29 @@
       "maxLength": 300
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "privacyLevel": {
+            "const": "metadata-only"
+          }
+        },
+        "required": [
+          "privacyLevel"
+        ]
+      },
+      "then": {
+        "properties": {
+          "cwd": {
+            "type": "null"
+          },
+          "summary": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }

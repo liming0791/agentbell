@@ -68,6 +68,9 @@ for (const relativePath of [
   if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
     throw new Error(`${relativePath} must declare an npm files allowlist.`);
   }
+  if (manifest.repository?.url !== "git+https://github.com/liming0791/agentbell.git") {
+    throw new Error(`${relativePath} must link to the release repository.`);
+  }
 }
 
 console.log(

@@ -6,7 +6,9 @@ AgentBell 是一个面向 Coding Agent CLI、IDE 和 Desktop Agent 的跨平台�
 2. 把不同 CLI 的事件归一化成统一通知事件。
 3. 调用飞书官方 `lark-cli`，把完成、失败或等待授权等事件发送到指定会话。
 
-当前仓库是可运行、可校验的项目骨架，重点先固定边界、目录和插件格式。现有 Node.js 代码是协议原型；面向大众发布的正式 Core 已确定采用 Go 单文件程序，以覆盖 Windows、macOS 和 Linux，并降低 GUI 应用找不到 Node.js/PATH 的风险。
+当前版本为 `v0.2.0-rc.1` Technical Preview：Go 单文件 Core、持久队列、前台
+Service、Codex 参考 Adapter、npm bootstrap 和六目标 Release 流水线已经实现。Node.js
+Hook runtime 仅保留为 M0 迁移期原型，不是正式 Hook 数据面。
 
 ## 首期范围
 
@@ -20,6 +22,7 @@ AgentBell 是一个面向 Coding Agent CLI、IDE 和 Desktop Agent 的跨平台�
 
 ```text
 agentbell/
+├─ core/                     # Go 原生 Core、队列、Service 和 Adapter
 ├─ packages/
 │  ├─ cli/                 # 用户安装、检测、绑定和诊断入口
 │  └─ hook-runtime/        # Hook 输入归一化与飞书发送
@@ -41,15 +44,30 @@ agentbell/
 ```bash
 npm ci
 npm run ci
+npm run perf:emit
 npm run doctor
 npm run setup:plan
 ```
 
-`setup:plan` 只输出安装计划，不会修改用户环境，也不会安装 `lark-cli`。
+`doctor` 和 `setup:plan` 在源码仓库中检查 bootstrap 环境，不修改用户环境。安装 Core 后，
+`agentbell doctor --json` 由原生 Core 提供运行诊断。
 
-仓库已配置 GitHub Actions：Pull Request 和 `main` 推送会执行跨平台测试，`vX.Y.Z`
-标签会通过 GitHub OIDC 发布两个 npm workspace 并创建 GitHub Release。首次连接远程
-仓库和 npm Trusted Publisher 的步骤见 [CI/CD 与发布](./docs/ci-cd.md)。
+仓库已配置 GitHub Actions：Pull Request 和 `main` 推送会执行 Node/Go 跨平台测试、
+race detector、三平台 emit 性能门禁和六目标构建。`vX.Y.Z` 标签会生成 checksum、
+Technical Preview manifest、构建证明和 GitHub Release；npm Trusted Publisher 就绪后
+再发布 workspace。
+
+M0.5 命令面：
+
+```text
+agentbell version --json
+agentbell emit --adapter codex --surface cli --runtime host --stdin
+agentbell service run --foreground
+agentbell doctor --json
+agentbell queue list --state dead
+agentbell queue retry <event-id>
+agentbell adapter <detect|plan|install|verify|uninstall|diagnose> codex
+```
 
 ## 目标体验
 
@@ -65,4 +83,7 @@ npx @agentbell/cli@latest setup
 - 创建或选择通知会话，并为它命名；
 - 安装对应 Hook，发送测试通知。
 
-更完整的设计见 [架构说明](./docs/architecture.md)、[兼容矩阵](./docs/compatibility.md)、[适配器协议](./docs/adapter-contract.md)、[产品决策](./docs/decisions.md)、[项目待办](./TODO.md)、[开发路线](./docs/development.md) 和 [CI/CD 与发布](./docs/ci-cd.md)。
+更完整的设计见 [架构说明](./docs/architecture.md)、[兼容矩阵](./docs/compatibility.md)、
+[适配器协议](./docs/adapter-contract.md)、[安装与运维](./docs/operations.md)、
+[M0.5 验收记录](./docs/m0.5-validation.md)、[M0.5 执行计划](./docs/m0.5-execution-plan.md)
+和 [CI/CD 与发布](./docs/ci-cd.md)。

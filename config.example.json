@@ -2,11 +2,12 @@
   "defaultChannel": "my-feishu",
   "notifications": {
     "events": [
-      "Stop",
-      "StopFailure",
-      "PermissionRequest"
+      "task.completed",
+      "task.failed",
+      "approval.required"
     ],
-    "includeSummary": false
+    "includeSummary": false,
+    "privacyLevel": "metadata-only"
   },
   "channels": [
     {
@@ -18,4 +19,3 @@
     }
   ]
 }
-

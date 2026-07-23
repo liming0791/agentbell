@@ -11,6 +11,8 @@ const nodeGlobals = {
 export default [
   {
     ignores: [
+      ".agentbell-bootstrap-test/",
+      ".tools/",
       "artifacts/",
       "coverage/",
       "dist/",

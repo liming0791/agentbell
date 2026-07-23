@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 import { detectEnvironment } from "../packages/cli/src/detect.mjs";
@@ -35,7 +38,7 @@ test("prints help", async () => {
 });
 
 test("prints doctor output and a setup plan", async () => {
-  const doctorLogs = await captureLogs(() => run(["doctor"]));
+  const doctorLogs = await captureLogs(() => run(["bootstrap-doctor"]));
   const planLogs = await captureLogs(() => run(["setup", "--plan"]));
 
   assert.equal(JSON.parse(doctorLogs[0]).node.installed, true);
@@ -44,4 +47,27 @@ test("prints doctor output and a setup plan", async () => {
 
 test("rejects unsupported commands", async () => {
   await assert.rejects(() => run(["unknown"]), /Unsupported command/);
+});
+
+test("routes native commands to a checksum-installed Core", async (context) => {
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "agentbell-cli-test-")
+  );
+  const previous = process.env.AGENTBELL_DATA_DIR;
+  process.env.AGENTBELL_DATA_DIR = temporaryRoot;
+  context.after(async () => {
+    if (previous === undefined) {
+      delete process.env.AGENTBELL_DATA_DIR;
+    } else {
+      process.env.AGENTBELL_DATA_DIR = previous;
+    }
+    await rm(temporaryRoot, { recursive: true, force: true });
+  });
+
+  const logs = await captureLogs(() => run(["core-path"]));
+  assert.match(logs[0], /0\.2\.0-rc\.1/);
+  await assert.rejects(
+    run(["version"]),
+    /Core 0\.2\.0-rc\.1 is not installed/
+  );
 });

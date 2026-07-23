@@ -49,9 +49,12 @@ Node.js 保留为 npm 安装入口和开发期脚手架，例如 `npx @agentbell
 
 - `agentbell emit`：接收 stdin 或命令行事件，完成归一化并写入本地队列。
 - `agentbell service`：消费队列、去重、重试并调用传输层。
-- 队列：使用轻量嵌入式存储；至少保存事件 ID、重试次数、下次重试时间和最终状态。
+- 队列：使用无 CGO 的文件系统 spool，包含
+  `pending/inflight/history/dead/tmp/keys`，保存事件 ID、租约、重试次数、下次尝试时间
+  和最终状态。
 - 幂等键：`source + surface + sessionId + event + turnId/taskId`。
-- 默认重试：指数退避，达到上限后保留失败记录供 `doctor` 查看。
+- 默认重试：`1s/5s/30s/2m/10m`，达到上限后保留 dead-letter 供 `doctor` 查看。
+- 状态迁移先持久化目标再移除来源；启动时修复重复副本并恢复超时租约。
 
 ## 跨平台安装
 
@@ -115,6 +118,7 @@ Windows 用户可能同时存在 Windows Host、WSL、Docker 和 SSH Remote。�
 - `approval.required`
 - `session.interrupted`
 - `subagent.completed`（默认关闭）
+- `agent.info`（未知事件的保守降级）
 
 通知默认只发送 Agent 名称、Surface、项目名、状态和时间。任务全文、路径、代码、提示词和最后回复都需要用户单独开启。
 

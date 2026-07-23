@@ -1,8 +1,13 @@
 {
   "name": "@agentbell/cli",
-  "version": "0.1.0",
+  "version": "0.2.0-rc.1",
   "description": "Install, bind and diagnose AgentBell notifications.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liming0791/agentbell.git",
+    "directory": "packages/cli"
+  },
   "type": "module",
   "files": [
     "bin/",

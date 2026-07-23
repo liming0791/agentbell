@@ -12,19 +12,122 @@ on:
         type: string
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish npm packages and GitHub release
+  build-core:
+    name: Build native Core
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      SIGNATURE_STATUS: ${{ vars.AGENTBELL_SIGNATURE_STATUS || 'technical-preview' }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Resolve the checked-out release commit
+        run: echo "RELEASE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Use Go 1.26.5
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: core/go.mod
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Enforce the M0.5 signing gate
+        run: |
+          if [ "$SIGNATURE_STATUS" != "technical-preview" ]; then
+            echo "Signed releases require a separately implemented and reviewed signing job."
+            exit 1
+          fi
+          echo "Publishing unsigned Technical Preview artifacts."
+
+      - name: Verify release contents
+        run: |
+          npm run ci
+          npm run release:verify -- "$RELEASE_TAG"
+
+      - name: Build six native binaries
+        run: |
+          version="${RELEASE_TAG#v}"
+          source_date_epoch="$(git show -s --format=%ct "$RELEASE_COMMIT")"
+          build_time="$(date -u -d "@$source_date_epoch" +%Y-%m-%dT%H:%M:%SZ)"
+          npm run build:core -- \
+            --version "$version" \
+            --commit "$RELEASE_COMMIT" \
+            --build-time "$build_time"
+
+      - name: Create platform archives
+        working-directory: artifacts/core
+        run: |
+          source_date_epoch="$(git -C ../.. show -s --format=%ct "$RELEASE_COMMIT")"
+          touch -d "@$source_date_epoch" agentbell-*
+          zip -X -9 agentbell-windows-amd64.zip agentbell-windows-amd64.exe
+          zip -X -9 agentbell-windows-arm64.zip agentbell-windows-arm64.exe
+          for target in \
+            agentbell-darwin-amd64 \
+            agentbell-darwin-arm64 \
+            agentbell-linux-amd64 \
+            agentbell-linux-arm64
+          do
+            tar --sort=name \
+              --mtime="@$source_date_epoch" \
+              --owner=0 --group=0 --numeric-owner \
+              -cf - "$target" | gzip -n -9 > "$target.tar.gz"
+          done
+
+      - name: Generate checksums and release manifest
+        run: |
+          version="${RELEASE_TAG#v}"
+          node scripts/release-metadata.mjs \
+            --directory artifacts/core \
+            --version "$version" \
+            --commit "$RELEASE_COMMIT" \
+            --signature-status "$SIGNATURE_STATUS"
+
+      - name: Smoke-test host binary and npm bootstrap
+        run: |
+          chmod +x artifacts/core/agentbell-linux-amd64
+          version="${RELEASE_TAG#v}"
+          npm run smoke:bootstrap -- \
+            --directory artifacts/core \
+            --version "$version"
+
+      - name: Upload Core artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: agentbell-core
+          path: artifacts/core/
+          if-no-files-found: error
+
+  publish:
+    name: Publish Core, npm packages and GitHub release
+    needs: build-core
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: npm-publish
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
@@ -35,7 +138,37 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - name: Use Node.js 24
+      - name: Download Core artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: agentbell-core
+          path: artifacts/core
+
+      - name: Attest Core artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/core/*
+
+      - name: Stage Core artifacts in a draft GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease_args=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            prerelease_args+=(--prerelease)
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/core/* --clobber
+          else
+            gh release create "$RELEASE_TAG" artifacts/core/* \
+              --draft \
+              --generate-notes \
+              --verify-tag \
+              "${prerelease_args[@]}"
+          fi
+
+      - name: Use Node.js 24 for trusted publishing
         uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -43,55 +176,49 @@ jobs:
           package-manager-cache: false
 
       - name: Ensure an OIDC-capable npm CLI
+        if: vars.NPM_PUBLISH_ENABLED == 'true'
         run: npm install --global "npm@^11.5.1"
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify release contents
+      - name: Build npm package archives
         run: |
-          npm run ci
-          npm run release:verify -- "$RELEASE_TAG"
+          mkdir -p artifacts/npm
+          npm pack --workspace @agentbell/hook-runtime --pack-destination artifacts/npm
+          npm pack --workspace @agentbell/cli --pack-destination artifacts/npm
 
-      - name: Bind package metadata to this repository
-        run: |
-          npm pkg set "repository.type=git" \
-            "repository.url=git+$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" \
-            --workspaces
-
-      - name: Build package archives
-        run: |
-          mkdir -p artifacts
-          npm pack --workspace @agentbell/hook-runtime --pack-destination artifacts
-          npm pack --workspace @agentbell/cli --pack-destination artifacts
-
-      - name: Publish packages
+      - name: Publish npm packages
+        if: vars.NPM_PUBLISH_ENABLED == 'true'
         shell: bash
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
+          publish_args=(--access public)
+          if [[ "$version" == *-* ]]; then
+            publish_args+=(--tag next)
+          fi
 
           if npm view "@agentbell/hook-runtime@$version" version --silent >/dev/null 2>&1; then
             echo "@agentbell/hook-runtime@$version is already published."
           else
-            npm publish artifacts/agentbell-hook-runtime-*.tgz --access public
+            npm publish artifacts/npm/agentbell-hook-runtime-*.tgz "${publish_args[@]}"
           fi
 
           if npm view "@agentbell/cli@$version" version --silent >/dev/null 2>&1; then
             echo "@agentbell/cli@$version is already published."
           else
-            npm publish artifacts/agentbell-cli-*.tgz --access public
+            npm publish artifacts/npm/agentbell-cli-*.tgz "${publish_args[@]}"
           fi
 
-      - name: Create or update GitHub release
-        shell: bash
+      - name: Record disabled npm registry publishing
+        if: vars.NPM_PUBLISH_ENABLED != 'true'
         run: |
-          set -euo pipefail
+          echo "npm registry publishing is disabled until @agentbell ownership and trusted publishing are configured."
+          echo "The verified npm tgz archives will still be attached to the GitHub Release."
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" artifacts/*.tgz --clobber
-          else
-            gh release create "$RELEASE_TAG" artifacts/*.tgz \
-              --generate-notes \
-              --verify-tag
-          fi
+      - name: Upload npm archives to GitHub release
+        run: gh release upload "$RELEASE_TAG" artifacts/npm/*.tgz --clobber
+
+      - name: Publish the completed GitHub release
+        run: gh release edit "$RELEASE_TAG" --draft=false

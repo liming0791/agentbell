@@ -6,7 +6,7 @@
       "id": "codex",
       "displayName": "Codex",
       "phase1": true,
-      "supportLevel": "verified",
+      "supportLevel": "pilot",
       "surfaces": [
         "cli",
         "desktop"
@@ -26,7 +26,7 @@
       "id": "claude-code",
       "displayName": "Claude Code",
       "phase1": true,
-      "supportLevel": "verified",
+      "supportLevel": "pilot",
       "surfaces": [
         "cli",
         "desktop"
@@ -48,7 +48,7 @@
       "id": "opencode",
       "displayName": "OpenCode",
       "phase1": true,
-      "supportLevel": "verified",
+      "supportLevel": "pilot",
       "surfaces": [
         "cli",
         "tui",
@@ -70,7 +70,7 @@
       "id": "kimi-code",
       "displayName": "Kimi Code",
       "phase1": true,
-      "supportLevel": "verified",
+      "supportLevel": "pilot",
       "surfaces": [
         "cli"
       ],
@@ -91,7 +91,7 @@
       "id": "qoder",
       "displayName": "Qoder",
       "phase1": true,
-      "supportLevel": "verified",
+      "supportLevel": "pilot",
       "surfaces": [
         "cli",
         "ide",

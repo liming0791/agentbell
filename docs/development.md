@@ -10,11 +10,15 @@
 
 ## M0.5：产品 Core 与 Adapter SDK
 
-- 将正式 Core 迁移为 Go 单文件二进制；Node.js 保留为 npm bootstrap。
-- 实现 `agentbell emit`、本地持久队列和用户级后台服务。
-- 实现 Adapter manifest、能力探测、dry-run、结构化配置合并和精确卸载。
-- 建立 Windows x64/arm64、macOS Intel/Apple Silicon、Linux x64/arm64 构建与签名流水线。
-- 给事件协议补充 Surface、运行位置、幂等键、隐私级别和优先级。
+- 状态：`v0.2.0-rc.1` Technical Preview 验收中。
+- 执行计划：[M0.5 执行计划](./m0.5-execution-plan.md)。
+- [x] 将正式 Core 迁移为 Go 单文件二进制；Node.js 保留为 npm bootstrap。
+- [x] 实现 `agentbell emit`、本地持久队列和前台用户级 Service。
+- [x] 实现 Adapter manifest、dry-run、安全 JSON 合并和精确卸载。
+- [x] 完成 Codex Adapter 生命周期与三平台 fixture。
+- [x] 建立 Windows x64/arm64、macOS Intel/Apple Silicon、Linux x64/arm64 构建流水线。
+- [x] 给事件协议补充 Surface、运行位置、幂等键、隐私级别和优先级。
+- [x] 为未签名产物建立 `technical-preview` gate；正式签名留在 M1。
 
 ## M1：本机安装闭环与 Verified Adapters
 
@@ -23,7 +27,7 @@
 - 引导 `lark-cli config init --new`、`lark-cli auth login --domain im`。
 - 获取或创建目标会话，写入 `~/.agentbell/config.json`。
 - 完成 Codex、Claude Code、OpenCode、Kimi Code、Qoder 的 CLI/Desktop 本地适配。
-- 提供 `agentbell doctor`、`agentbell test` 和 `agentbell uninstall`。
+- 注册系统登录自启动，提供 `agentbell test` 和产品级统一卸载。
 
 ## M1.5：首期 Desktop Pilot
 
@@ -37,7 +41,7 @@
 - 用一次性绑定码承接桌面 CLI 与飞书会话的关联。
 - 提供“通道名称、通知模板、事件开关、免打扰时间”设置。
 - 支持升级、回滚、Hook 冲突检测和插件签名校验。
-- 对重复 Stop、重试和多 Agent 事件做幂等去重。
+- 扩展跨主机、跨 relay 的幂等和团队级事件策略。
 - 增加 WSL Host Bridge；SSH、容器和 Vendor Cloud 使用显式远程 shim/relay。
 
 ## M3：平台化
@@ -67,10 +71,11 @@ npm run doctor
 npm run setup:plan
 ```
 
-`npm run ci` 包含 lint、结构检查、测试覆盖率报告和 npm 打包预检。跨平台 CI、版本同步、
-npm Trusted Publishing 和 GitHub Release 流程见 [CI/CD 与发布](./ci-cd.md)。
+`npm run ci` 包含 lint、结构检查、Node/Go 覆盖率门禁和 npm 打包预检。性能门禁使用
+`npm run perf:emit`。跨平台 CI、版本同步、npm Trusted Publishing 和 GitHub Release
+流程见 [CI/CD 与发布](./ci-cd.md)，运行与恢复见 [安装与运维](./operations.md)。
 
-调试 Hook 归一化：
+调试 M0 迁移期 Node Hook 原型（正式 M0.5 数据面使用 Go Core）：
 
 ```bash
 echo '{"hook_event_name":"Stop","cwd":"/tmp/demo"}' \

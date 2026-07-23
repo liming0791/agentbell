@@ -1,5 +1,7 @@
 node_modules/
+.tools/
 coverage/
+/core/coverage*
 dist/
 artifacts/
 .eslintcache
@@ -12,5 +14,6 @@ Thumbs.db
 .env.*
 !.env.example
 .agentbell/
+.agentbell-bootstrap-test/
 .idea/
 .vscode/

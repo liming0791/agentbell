@@ -69,7 +69,8 @@ Dialect 只描述事件协议；路径、变量名、插件根目录和配置优
 | Interrupt | `session.interrupted` |
 | SubagentStop | `subagent.completed` |
 
-不能确认语义时保留 `rawEvent`，并映射到 `agent.info`，不得猜成任务完成。
+不能确认语义时映射到 `agent.info`，不得猜成任务完成。原始 Hook 输入只在规范化进程内
+使用，默认不持久化。
 
 ## 安装规则
 
@@ -109,3 +110,6 @@ Adapter 可以通过 stdin 传原始 JSON/TOML 事件。AgentBell 对原始内�
 - 重复安装、升级、卸载可逆；
 - GUI 启动环境没有 shell PATH 时仍能执行；
 - 通知正文默认不泄露提示词、路径和代码。
+
+M0.5 的 Codex 实现只达到 Technical Preview/Pilot。fixture 和 CI 证明实现可移植，但不
+替代产品最低/最新版在每个支持操作系统上的真实事件验收。

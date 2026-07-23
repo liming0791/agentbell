@@ -15,14 +15,14 @@
 
 | 产品 | Surface | 官方入口 | 关键事件 | 平台/范围 | 当前等级 | 首期动作 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Codex | CLI | `hooks.json`、插件 Hook | `Stop`、`PermissionRequest` | Windows/macOS/Linux | A | 完成适配 |
-| Codex | ChatGPT Desktop 本地代码会话 | 与 CLI 共享 Codex 配置层和 Hook | 同上 | 以厂商支持平台为准；仅本地会话 | A | 与 Codex CLI 共用适配器 |
-| Claude Code | CLI | settings Hook、插件 Hook | `Stop`、`StopFailure`、`Notification`、`PermissionRequest` | Windows/macOS/Linux | A | 完成适配 |
-| Claude Code | Desktop Code tab | 与 CLI 共享 settings、Hooks 和插件 | 同上 | Windows/macOS/Linux beta；本地会话 | A | 与 Claude CLI 共用适配器 |
-| OpenCode | CLI/TUI | JS/TS/npm 插件事件 | `session.idle`、`session.error`、`permission.asked` | Windows/macOS/Linux | A | 新增 npm 插件 |
-| OpenCode | Desktop | 配置适用于 Desktop，插件可订阅 Session 事件 | 同上 | Windows/macOS/Linux | A | 与 OpenCode CLI 共用适配器 |
-| Kimi Code | CLI | TOML Hook、`kimi.plugin.json` | `Stop`、`StopFailure`、`PermissionRequest`、`Notification` | Windows/macOS/Linux | A | 扩充现有插件 |
-| Qoder | CLI/IDE/JetBrains 插件 | 共享 `settings.json` Hook、插件 Hook | `Stop`、`PostToolUseFailure` | CLI 三平台；IDE/JB 以厂商平台为准 | A | 新增 Claude-compatible dialect |
+| Codex | CLI | `hooks.json`、插件 Hook | `Stop`、`PermissionRequest` | Windows/macOS/Linux | B | M0.5 参考实现；等待真实三平台验收 |
+| Codex | ChatGPT Desktop 本地代码会话 | 与 CLI 共享 Codex 配置层和 Hook | 同上 | 以厂商支持平台为准；仅本地会话 | B | 与 Codex CLI 共用参考适配器；待实机 |
+| Claude Code | CLI | settings Hook、插件 Hook | `Stop`、`StopFailure`、`Notification`、`PermissionRequest` | Windows/macOS/Linux | B | M1 实现与实机验收 |
+| Claude Code | Desktop Code tab | 与 CLI 共享 settings、Hooks 和插件 | 同上 | Windows/macOS/Linux beta；本地会话 | B | M1 与 Claude CLI 共用适配器 |
+| OpenCode | CLI/TUI | JS/TS/npm 插件事件 | `session.idle`、`session.error`、`permission.asked` | Windows/macOS/Linux | B | M1 新增 npm 插件 |
+| OpenCode | Desktop | 配置适用于 Desktop，插件可订阅 Session 事件 | 同上 | Windows/macOS/Linux | B | M1 与 OpenCode CLI 共用适配器 |
+| Kimi Code | CLI | TOML Hook、`kimi.plugin.json` | `Stop`、`StopFailure`、`PermissionRequest`、`Notification` | Windows/macOS/Linux | B | M1 替换迁移期原型并实机验收 |
+| Qoder | CLI/IDE/JetBrains 插件 | 共享 `settings.json` Hook、插件 Hook | `Stop`、`PostToolUseFailure` | CLI 三平台；IDE/JB 以厂商平台为准 | B | M1 新增 Claude-compatible dialect |
 | ZCode | Desktop ADE | Beta 插件市场，官方列出 Hook 组件 | 待确认 | Windows/macOS；Linux beta | B | 做插件格式与 Stop 事件 spike |
 | Tencent WorkBuddy | Desktop | 官方插件市场列出 Hook 插件，可加第三方市场 | 待确认 | Windows/macOS | B | 向厂商确认 Hook schema，并实机验证 |
 | TRAE | IDE | v3.5.66 起官方更新日志声明支持 Hooks | 预计含 `Stop` | Windows/macOS；版本/账号分批开放 | B | 按版本和账号能力探测，不静态假设 |
@@ -35,6 +35,13 @@
 3. OpenCode 的配置适用于 TUI、CLI、Desktop 和 GitHub Action；插件可用 `session.idle` 识别一轮完成。
 4. Qoder IDE/JetBrains 插件与 CLI 共享 Hook 配置，格式与 Claude Code 高度兼容。
 5. Kimi Code 使用自己的 TOML/插件 Hook 格式，需要单独 dialect。
+
+## M0.5 实际交付状态
+
+机器可读 catalog 中所有可接入产品当前均为 `pilot`。Codex 已完成 Core Adapter
+实现、生命周期 conformance fixture 和跨平台 CI；其余产品保留 M0 协议原型或 catalog
+记录，正式 Adapter 属于 M1。公开文档证明产品存在确定性 Hook，不等于 AgentBell 已完成
+真实产品矩阵，因此不能据此标成 Verified。
 
 ## 公开证据
 
@@ -52,7 +59,7 @@
 
 “第一期覆盖”拆成两个对用户透明的通道：
 
-### Phase 1 GA
+### Phase 1 GA（目标，尚未达成 Verified）
 
 - Codex CLI + Desktop 本地会话
 - Claude Code CLI + Desktop Code tab 本地会话

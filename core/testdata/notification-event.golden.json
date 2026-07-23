@@ -1,0 +1,16 @@
+{
+  "version": "1",
+  "source": "codex",
+  "surface": "cli",
+  "runtime": "host",
+  "event": "task.completed",
+  "status": "completed",
+  "occurredAt": "2026-07-23T04:00:00Z",
+  "sessionId": "sha256:a779eba5d0e937b9",
+  "taskId": "sha256:ef6ef11f9b7c6fca",
+  "turnId": "sha256:05a3397bd71e5a89",
+  "idempotencyKey": "sha256:9ae7353138173260079dd366301d4dcca8e5cd0886fec98e84527e4022d6cf50",
+  "priority": "normal",
+  "privacyLevel": "metadata-only",
+  "project": "agentbell"
+}

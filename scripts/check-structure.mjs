@@ -20,11 +20,23 @@ const requiredFiles = [
   "docs/adapter-contract.md",
   "docs/compatibility.md",
   "docs/decisions.md",
+  "docs/m0.5-execution-plan.md",
+  "docs/m0.5-validation.md",
+  "docs/operations.md",
   "eslint.config.mjs",
   "schemas/notification-event.schema.json",
   "scripts/set-version.mjs",
+  "scripts/build-core.mjs",
+  "scripts/check-go.mjs",
+  "scripts/check-node-coverage.mjs",
+  "scripts/go-tool.mjs",
+  "scripts/benchmark-emit.mjs",
+  "scripts/release-metadata.mjs",
+  "scripts/smoke-bootstrap.mjs",
   "scripts/verify-release.mjs",
   "tests/cli.test.mjs",
+  "tests/bootstrap.test.mjs",
+  "tests/protocol.test.mjs",
   "tests/config-and-hook.test.mjs",
   "tests/normalize.test.mjs",
   "tests/plan.test.mjs",
@@ -33,6 +45,7 @@ const requiredFiles = [
   "packages/cli/package.json",
   "packages/cli/bin/agentbell.mjs",
   "packages/hook-runtime/package.json",
+  "core/testdata/notification-event.golden.json",
   "packages/hook-runtime/bin/agentbell-hook.mjs",
   "plugins/codex/agentbell/.codex-plugin/plugin.json",
   "plugins/codex/agentbell/hooks/hooks.json",
@@ -67,6 +80,14 @@ for (const relativePath of jsonFiles) {
 const catalog = JSON.parse(
   await readFile(path.join(root, "adapters/catalog.json"), "utf8")
 );
+const embeddedCatalog = JSON.parse(
+  await readFile(path.join(root, "core/internal/adapter/catalog.json"), "utf8")
+);
+if (JSON.stringify(catalog) !== JSON.stringify(embeddedCatalog)) {
+  throw new Error(
+    "Go embedded adapter catalog differs from adapters/catalog.json."
+  );
+}
 const supportLevels = new Set([
   "verified",
   "pilot",
