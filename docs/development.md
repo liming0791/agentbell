@@ -10,7 +10,7 @@
 
 ## M0.5：产品 Core 与 Adapter SDK
 
-- 状态：退出验收通过，发布 `v0.2.0-rc.2` Technical Preview。
+- 状态：退出验收通过，发布 `v0.2.0-rc.3` Technical Preview。
 - 执行计划：[M0.5 执行计划](./m0.5-execution-plan.md)。
 - [x] 将正式 Core 迁移为 Go 单文件二进制；Node.js 保留为 npm bootstrap。
 - [x] 实现 `agentbell emit`、本地持久队列和前台用户级 Service。

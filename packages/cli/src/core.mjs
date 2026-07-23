@@ -9,11 +9,13 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { URL } from "node:url";
 
 import { resolveDataRoot, resolveTarget } from "./platform.mjs";
 
 const defaultReleaseBase =
   "https://github.com/liming0791/agentbell/releases";
+const githubAPIOrigin = "https://api.github.com";
 
 function checksum(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -30,10 +32,13 @@ function parseChecksums(value) {
   return result;
 }
 
-async function fetchRequired(fetchImpl, url, token) {
+async function fetchRequired(fetchImpl, url, token, accept) {
   const headers = {
     "user-agent": "agentbell-bootstrap"
   };
+  if (accept) {
+    headers.accept = accept;
+  }
   if (token) {
     headers.authorization = `Bearer ${token}`;
   }
@@ -45,6 +50,63 @@ async function fetchRequired(fetchImpl, url, token) {
     throw new Error(`Download failed (${response.status}) for ${url}`);
   }
   return response;
+}
+
+function githubReleaseAPI(releaseBase) {
+  try {
+    const parsed = new URL(releaseBase);
+    const match = /^\/([^/]+)\/([^/]+)\/releases\/?$/.exec(parsed.pathname);
+    if (parsed.hostname !== "github.com" || !match) {
+      return null;
+    }
+    const owner = encodeURIComponent(match[1]);
+    const repository = encodeURIComponent(match[2]);
+    return `${githubAPIOrigin}/repos/${owner}/${repository}`;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveReleaseAssets({
+  fetchImpl,
+  releaseBase,
+  version,
+  targetFileName,
+  token
+}) {
+  const repositoryAPI = token ? githubReleaseAPI(releaseBase) : null;
+  if (!repositoryAPI) {
+    const releaseURL = `${releaseBase.replace(/\/$/, "")}/download/v${version}`;
+    return {
+      checksumsURL: `${releaseURL}/checksums.txt`,
+      binaryURL: `${releaseURL}/${targetFileName}`
+    };
+  }
+
+  const metadataURL = `${repositoryAPI}/releases/tags/v${version}`;
+  const metadataResponse = await fetchRequired(
+    fetchImpl,
+    metadataURL,
+    token,
+    "application/vnd.github+json"
+  );
+  const metadata = await metadataResponse.json();
+  if (!Array.isArray(metadata.assets)) {
+    throw new Error(`GitHub release v${version} returned no asset list.`);
+  }
+
+  const assetURL = (name) => {
+    const asset = metadata.assets.find((candidate) => candidate?.name === name);
+    if (!asset || typeof asset.url !== "string") {
+      throw new Error(`GitHub release v${version} does not contain ${name}.`);
+    }
+    return asset.url;
+  };
+
+  return {
+    checksumsURL: assetURL("checksums.txt"),
+    binaryURL: assetURL(targetFileName)
+  };
 }
 
 export function coreInstallPath({
@@ -82,11 +144,18 @@ export async function installCore({
     dataRoot
   });
   const installDirectory = path.dirname(installPath);
-  const releaseURL = `${releaseBase.replace(/\/$/, "")}/download/v${version}`;
+  const releaseAssets = await resolveReleaseAssets({
+    fetchImpl,
+    releaseBase,
+    version,
+    targetFileName: target.fileName,
+    token
+  });
   const checksumsResponse = await fetchRequired(
     fetchImpl,
-    `${releaseURL}/checksums.txt`,
-    token
+    releaseAssets.checksumsURL,
+    token,
+    "application/octet-stream"
   );
   const checksums = parseChecksums(await checksumsResponse.text());
   const expected = checksums.get(target.fileName);
@@ -113,8 +182,9 @@ export async function installCore({
 
   const binaryResponse = await fetchRequired(
     fetchImpl,
-    `${releaseURL}/${target.fileName}`,
-    token
+    releaseAssets.binaryURL,
+    token,
+    "application/octet-stream"
   );
   const binary = Buffer.from(await binaryResponse.arrayBuffer());
   const actual = checksum(binary);

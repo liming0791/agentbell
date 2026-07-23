@@ -1,6 +1,6 @@
 # AgentBell M0.5 安装与运维
 
-M0.5 是 `v0.2.0-rc.2` Technical Preview。它提供原生 Core、前台 Service、Codex
+M0.5 是 `v0.2.0-rc.3` Technical Preview。它提供原生 Core、前台 Service、Codex
 参考 Adapter 和 npm bootstrap；系统登录自启动、GUI 安装器、正式代码签名和真实飞书
 绑定向导属于 M1。
 
@@ -12,19 +12,21 @@ token；token 只进入 HTTP `Authorization` header，不写入 URL、安装元�
 在 npm Trusted Publisher 启用前，先从 GitHub Release 取得已验证的 tgz：
 
 ```powershell
-gh release download v0.2.0-rc.2 --repo liming0791/agentbell --pattern "agentbell-cli-*.tgz"
+gh release download v0.2.0-rc.3 --repo liming0791/agentbell --pattern "agentbell-cli-*.tgz"
 $env:AGENTBELL_GITHUB_TOKEN = gh auth token
-npm exec --package .\agentbell-cli-0.2.0-rc.2.tgz -- agentbell install-core --version 0.2.0-rc.2
+npm exec --package .\agentbell-cli-0.2.0-rc.3.tgz -- agentbell install-core --version 0.2.0-rc.3
 Remove-Item Env:AGENTBELL_GITHUB_TOKEN
 ```
 
 npm registry 发布启用后，也可以直接运行
-`npx @agentbell/cli@0.2.0-rc.2 install-core --version 0.2.0-rc.2`。
+`npx @agentbell/cli@0.2.0-rc.3 install-core --version 0.2.0-rc.3`。
 
 在 macOS/Linux 中把第一行改成
 `export AGENTBELL_GITHUB_TOKEN="$(gh auth token)"`，完成后执行
 `unset AGENTBELL_GITHUB_TOKEN`。bootstrap 先下载 `checksums.txt`，校验 SHA-256 后才把
 Core 移入版本目录；校验失败的文件不会执行。
+私有仓库使用 GitHub Releases API 定位 asset，并用同一个只读 token 下载；公开仓库和
+`AGENTBELL_RELEASE_BASE_URL` 指向的测试镜像仍使用标准 Release 下载路径。
 
 M0.5 产物未签名。`install.json` 和 `release-manifest.json` 的
 `signatureStatus` 必须为 `technical-preview`。

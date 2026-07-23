@@ -170,6 +170,10 @@ test("uses an explicit token only as an Authorization header", async () => {
   const binary = Buffer.from("authenticated-binary");
   const expected = sha256(binary);
   const requests = [];
+  const checksumsAssetURL =
+    "https://api.github.com/repos/liming0791/agentbell/releases/assets/1";
+  const binaryAssetURL =
+    "https://api.github.com/repos/liming0791/agentbell/releases/assets/2";
   const temporaryRoot = await mkdtemp(
     path.join(os.tmpdir(), "agentbell-bootstrap-test-")
   );
@@ -180,7 +184,21 @@ test("uses an explicit token only as an Authorization header", async () => {
       token: "private-token",
       fetchImpl: async (url, options) => {
         requests.push({ url, options });
-        if (url.endsWith("/checksums.txt")) {
+        if (url.endsWith("/releases/tags/v0.2.0")) {
+          return {
+            ok: true,
+            json: async () => ({
+              assets: [
+                { name: "checksums.txt", url: checksumsAssetURL },
+                {
+                  name: "agentbell-windows-amd64.exe",
+                  url: binaryAssetURL
+                }
+              ]
+            })
+          };
+        }
+        if (url === checksumsAssetURL) {
           return {
             ok: true,
             text: async () => `${expected}  agentbell-windows-amd64.exe\n`
@@ -195,11 +213,18 @@ test("uses an explicit token only as an Authorization header", async () => {
       architecture: "x64"
     });
     assert.equal(result.reused, false);
-    assert.equal(requests.length, 2);
+    assert.equal(requests.length, 3);
     assert.ok(requests.every(
       ({ url, options }) =>
         !url.includes("private-token") &&
         options.headers.authorization === "Bearer private-token"
+    ));
+    assert.equal(
+      requests[0].options.headers.accept,
+      "application/vnd.github+json"
+    );
+    assert.ok(requests.slice(1).every(
+      ({ options }) => options.headers.accept === "application/octet-stream"
     ));
     const metadata = JSON.parse(
       await readFile(path.join(path.dirname(result.path), "install.json"), "utf8")

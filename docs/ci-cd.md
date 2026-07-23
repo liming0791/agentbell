@@ -13,7 +13,7 @@ npm ci
 npm run ci
 npm run perf:emit
 npm run build:core
-npm run release:verify -- v0.2.0-rc.2
+npm run release:verify -- v0.2.0-rc.3
 ```
 
 `npm run ci` 依次执行：
@@ -62,6 +62,7 @@ tag/manifest 校验
 -> npm pack/publish
 -> 上传 npm tgz
 -> 发布完整 GitHub Release
+-> 从私有 Release API 下载、校验、安装并执行 Core
 ```
 
 Core 版本的 `buildTime` 来自 tag commit 时间，不来自 runner 当前时间。tar 使用固定
@@ -88,7 +89,7 @@ signed。
    `liming0791/agentbell`、`release.yml`、`npm-publish`；
 4. 若 npm 要求包先存在，维护者先完成一次最小首发，再立即切换 OIDC。
 
-`v0.2.0-rc.2` 等预发布版本发布到 npm `next` dist-tag；正式版本使用 `latest`。相同版本
+`v0.2.0-rc.3` 等预发布版本发布到 npm `next` dist-tag；正式版本使用 `latest`。相同版本
 已存在时 workflow 会跳过 npm publish，因此 GitHub Release 上传可以安全重跑。
 完成上述配置后，把仓库变量 `NPM_PUBLISH_ENABLED` 设为 `true`。变量未开启时，Release
 仍会发布已验证的 Core 和两个 npm tgz，但不会向 npm registry 发起未经授权的 publish。
@@ -96,15 +97,17 @@ signed。
 ## 创建 RC
 
 ```bash
-npm run version:set -- 0.2.0-rc.2
+npm run version:set -- 0.2.0-rc.3
 npm run ci
-npm run release:verify -- v0.2.0-rc.2
+npm run release:verify -- v0.2.0-rc.3
 git add .
 git commit -m "feat: deliver M0.5 technical preview"
-git tag -a v0.2.0-rc.2 -m "AgentBell v0.2.0-rc.2"
+git tag -a v0.2.0-rc.3 -m "AgentBell v0.2.0-rc.3"
 git push origin main
-git push origin v0.2.0-rc.2
+git push origin v0.2.0-rc.3
 ```
 
 发布失败时保留 draft Release 供诊断，不对外显示为完整发布。npm 版本不可覆盖；修复后
 发布新的 prerelease 或 patch 版本，不强制改写 Git tag。
+完整 Release 发布后还会使用当前 job 的短期 GitHub token 走私有仓库 API 安装并执行
+Core；该 smoke 失败时，workflow 会把 Release 自动退回 draft。
