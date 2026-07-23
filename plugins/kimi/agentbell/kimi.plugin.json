@@ -1,0 +1,37 @@
+{
+  "name": "agentbell",
+  "version": "0.1.0",
+  "description": "Send Kimi Code CLI lifecycle notifications to Feishu through AgentBell and lark-cli.",
+  "keywords": [
+    "notifications",
+    "hooks",
+    "feishu",
+    "lark"
+  ],
+  "author": "AgentBell contributors",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AgentBell",
+    "shortDescription": "Send Kimi Code task notifications to Feishu.",
+    "longDescription": "AgentBell forwards selected Kimi Code lifecycle events to a configured Feishu conversation through the official lark-cli.",
+    "developerName": "AgentBell contributors"
+  },
+  "hooks": [
+    {
+      "event": "Stop",
+      "command": "node ./scripts/hook.mjs kimi",
+      "timeout": 20
+    },
+    {
+      "event": "StopFailure",
+      "command": "node ./scripts/hook.mjs kimi",
+      "timeout": 20
+    },
+    {
+      "event": "PermissionRequest",
+      "command": "node ./scripts/hook.mjs kimi",
+      "timeout": 20
+    }
+  ]
+}

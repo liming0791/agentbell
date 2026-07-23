@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-23",
+  "adapters": [
+    {
+      "id": "codex",
+      "displayName": "Codex",
+      "phase1": true,
+      "supportLevel": "verified",
+      "surfaces": [
+        "cli",
+        "desktop"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "dialect": "codex-json-hooks",
+      "events": [
+        "Stop",
+        "PermissionRequest"
+      ]
+    },
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "phase1": true,
+      "supportLevel": "verified",
+      "surfaces": [
+        "cli",
+        "desktop"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "dialect": "claude-json-hooks",
+      "events": [
+        "Stop",
+        "StopFailure",
+        "Notification",
+        "PermissionRequest"
+      ]
+    },
+    {
+      "id": "opencode",
+      "displayName": "OpenCode",
+      "phase1": true,
+      "supportLevel": "verified",
+      "surfaces": [
+        "cli",
+        "tui",
+        "desktop"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "dialect": "opencode-plugin-events",
+      "events": [
+        "session.idle",
+        "session.error",
+        "permission.asked"
+      ]
+    },
+    {
+      "id": "kimi-code",
+      "displayName": "Kimi Code",
+      "phase1": true,
+      "supportLevel": "verified",
+      "surfaces": [
+        "cli"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "dialect": "kimi-plugin-hooks",
+      "events": [
+        "Stop",
+        "StopFailure",
+        "PermissionRequest",
+        "Notification"
+      ]
+    },
+    {
+      "id": "qoder",
+      "displayName": "Qoder",
+      "phase1": true,
+      "supportLevel": "verified",
+      "surfaces": [
+        "cli",
+        "ide",
+        "jetbrains"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "dialect": "claude-json-hooks",
+      "events": [
+        "Stop",
+        "PostToolUseFailure"
+      ]
+    },
+    {
+      "id": "zcode",
+      "displayName": "ZCode",
+      "phase1": true,
+      "supportLevel": "pilot",
+      "surfaces": [
+        "desktop"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "dialect": "vendor-plugin-pilot",
+      "events": []
+    },
+    {
+      "id": "workbuddy",
+      "displayName": "Tencent WorkBuddy",
+      "phase1": true,
+      "supportLevel": "pilot",
+      "surfaces": [
+        "desktop"
+      ],
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "dialect": "vendor-plugin-pilot",
+      "events": []
+    },
+    {
+      "id": "trae",
+      "displayName": "TRAE IDE",
+      "phase1": true,
+      "supportLevel": "pilot",
+      "surfaces": [
+        "ide"
+      ],
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "dialect": "vendor-plugin-pilot",
+      "events": [
+        "Stop"
+      ]
+    },
+    {
+      "id": "kimi-work",
+      "displayName": "Kimi Work",
+      "phase1": false,
+      "supportLevel": "unsupported",
+      "roadmapStatus": "waiting-for-official-hook",
+      "blockedBy": "No public deterministic lifecycle hook",
+      "surfaces": [
+        "desktop"
+      ],
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "dialect": null,
+      "events": []
+    }
+  ]
+}

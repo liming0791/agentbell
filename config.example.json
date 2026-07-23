@@ -1,0 +1,21 @@
+{
+  "defaultChannel": "my-feishu",
+  "notifications": {
+    "events": [
+      "Stop",
+      "StopFailure",
+      "PermissionRequest"
+    ],
+    "includeSummary": false
+  },
+  "channels": [
+    {
+      "id": "my-feishu",
+      "name": "我的飞书",
+      "type": "feishu",
+      "chatId": "oc_replace_me",
+      "as": "bot"
+    }
+  ]
+}
+

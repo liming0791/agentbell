@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentbell.dev/schemas/notification-event.schema.json",
+  "title": "AgentBell NotificationEvent",
+  "type": "object",
+  "required": [
+    "version",
+    "source",
+    "event",
+    "status",
+    "occurredAt"
+  ],
+  "properties": {
+    "version": {
+      "const": "1"
+    },
+    "source": {
+      "enum": [
+        "codex",
+        "claude",
+        "opencode",
+        "kimi",
+        "qoder",
+        "zcode",
+        "workbuddy",
+        "trae",
+        "kimi-work"
+      ]
+    },
+    "surface": {
+      "enum": [
+        "cli",
+        "tui",
+        "ide",
+        "desktop",
+        "jetbrains",
+        "cloud"
+      ]
+    },
+    "runtime": {
+      "enum": [
+        "host",
+        "wsl",
+        "container",
+        "ssh",
+        "vendor-cloud"
+      ]
+    },
+    "event": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "failed",
+        "attention",
+        "info"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sessionId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "taskId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "turnId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "idempotencyKey": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "priority": {
+      "enum": [
+        "normal",
+        "high",
+        "urgent"
+      ]
+    },
+    "privacyLevel": {
+      "enum": [
+        "metadata-only",
+        "summary",
+        "full"
+      ]
+    },
+    "project": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cwd": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    }
+  },
+  "additionalProperties": false
+}

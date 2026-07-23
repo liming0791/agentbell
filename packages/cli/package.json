@@ -1,0 +1,21 @@
+{
+  "name": "@agentbell/cli",
+  "version": "0.1.0",
+  "description": "Install, bind and diagnose AgentBell notifications.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "bin/",
+    "src/"
+  ],
+  "bin": {
+    "agentbell": "./bin/agentbell.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

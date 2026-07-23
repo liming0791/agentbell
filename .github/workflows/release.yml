@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release (for example, v0.2.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish npm packages and GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm-publish
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+          package-manager-cache: false
+
+      - name: Ensure an OIDC-capable npm CLI
+        run: npm install --global "npm@^11.5.1"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release contents
+        run: |
+          npm run ci
+          npm run release:verify -- "$RELEASE_TAG"
+
+      - name: Bind package metadata to this repository
+        run: |
+          npm pkg set "repository.type=git" \
+            "repository.url=git+$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" \
+            --workspaces
+
+      - name: Build package archives
+        run: |
+          mkdir -p artifacts
+          npm pack --workspace @agentbell/hook-runtime --pack-destination artifacts
+          npm pack --workspace @agentbell/cli --pack-destination artifacts
+
+      - name: Publish packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+
+          if npm view "@agentbell/hook-runtime@$version" version --silent >/dev/null 2>&1; then
+            echo "@agentbell/hook-runtime@$version is already published."
+          else
+            npm publish artifacts/agentbell-hook-runtime-*.tgz --access public
+          fi
+
+          if npm view "@agentbell/cli@$version" version --silent >/dev/null 2>&1; then
+            echo "@agentbell/cli@$version is already published."
+          else
+            npm publish artifacts/agentbell-cli-*.tgz --access public
+          fi
+
+      - name: Create or update GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/*.tgz --clobber
+          else
+            gh release create "$RELEASE_TAG" artifacts/*.tgz \
+              --generate-notes \
+              --verify-tag
+          fi

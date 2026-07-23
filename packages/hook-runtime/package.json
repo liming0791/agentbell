@@ -1,0 +1,24 @@
+{
+  "name": "@agentbell/hook-runtime",
+  "version": "0.1.0",
+  "description": "Normalize Coding Agent hook events and deliver them through lark-cli.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "bin/",
+    "src/"
+  ],
+  "bin": {
+    "agentbell-hook": "./bin/agentbell-hook.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

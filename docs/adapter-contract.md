@@ -1,0 +1,111 @@
+# AgentBell Source Adapter 协议
+
+## 目标
+
+Adapter 负责把一个 Agent 产品的公开扩展入口转成 AgentBell 的统一事件。Adapter 不负责飞书认证和消息发送。
+
+## 生命周期
+
+每个 Adapter 实现以下操作：
+
+1. `detect`：检测产品、版本、Surface 和运行位置。
+2. `capabilities`：动态判断当前版本实际支持的事件。
+3. `plan`：输出将执行的安装、修改和权限请求。
+4. `install`：安装插件或结构化合并 Hook。
+5. `verify`：触发或模拟最小事件，确认 AgentBell 收到。
+6. `uninstall`：只删除 AgentBell 自己写入的内容。
+7. `diagnose`：返回路径、版本、Hook 状态和最近错误。
+
+## Manifest
+
+适配器目录以机器可读清单驱动，示例：
+
+```json
+{
+  "id": "qoder",
+  "displayName": "Qoder",
+  "supportLevel": "verified",
+  "surfaces": ["cli", "ide", "jetbrains"],
+  "platforms": ["windows", "macos", "linux"],
+  "dialect": "claude-json-hooks",
+  "events": {
+    "Stop": "task.completed",
+    "PostToolUseFailure": "task.failed"
+  },
+  "install": {
+    "strategy": "settings-merge",
+    "scope": "user"
+  }
+}
+```
+
+实际首期目录见 `adapters/catalog.json`。
+
+## Hook Dialect
+
+不要为每个产品复制一套几乎相同的模板。首期按协议族生成：
+
+| Dialect | 产品 |
+| --- | --- |
+| `codex-json-hooks` | Codex CLI/Desktop |
+| `claude-json-hooks` | Claude Code、Qoder，以及验证兼容后的产品 |
+| `kimi-plugin-hooks` | Kimi Code |
+| `opencode-plugin-events` | OpenCode |
+| `vendor-plugin-pilot` | ZCode、WorkBuddy、TRAE 的验证期适配 |
+| `assisted-mcp-skill` | 为将来明确批准的软触发集成预留；Kimi Work 当前不使用 |
+
+Dialect 只描述事件协议；路径、变量名、插件根目录和配置优先级仍由产品 profile 定义。
+
+没有公开确定性生命周期 Hook 的产品不得仅因为存在 Skill、MCP 或提示词入口就生成 Adapter。此类产品默认进入 Waiting，直到单独完成产品决策和风险评估。
+
+## 统一事件映射
+
+| 原始语义 | 统一事件 |
+| --- | --- |
+| Stop / session.idle / response ready | `task.completed` |
+| StopFailure / session.error | `task.failed` |
+| PermissionRequest / permission.asked | `approval.required` |
+| Notification idle_prompt / agent_needs_input | `agent.waiting` |
+| Interrupt | `session.interrupted` |
+| SubagentStop | `subagent.completed` |
+
+不能确认语义时保留 `rawEvent`，并映射到 `agent.info`，不得猜成任务完成。
+
+## 安装规则
+
+- 默认用户级安装；项目级安装需要显式参数。
+- 能通过官方插件安装时，不直接修改用户设置。
+- 修改 JSON/JSONC/TOML 时解析后合并，保留未知字段。
+- 每个 Hook 使用稳定 ID，例如 `agentbell.task-completed`。
+- 重复运行 `install` 不产生重复条目。
+- 发现同名但内容不同的 Hook 时停止并报告冲突。
+- 安装前备份；卸载根据稳定 ID 和内容哈希精确删除。
+- GUI Surface 使用 AgentBell 二进制绝对路径。
+
+## 原始事件入口
+
+统一调用形式：
+
+```text
+agentbell emit \
+  --adapter qoder \
+  --surface ide \
+  --runtime host \
+  --stdin
+```
+
+Adapter 可以通过 stdin 传原始 JSON/TOML 事件。AgentBell 对原始内容设置大小上限，默认不持久化完整 transcript。
+
+## 验收门槛
+
+一个 Adapter 从 Pilot 升为 Verified 前必须通过：
+
+- 产品最低支持版本和最新版各一次；
+- 产品实际支持的每个操作系统；
+- 完成、失败、等待输入/授权至少三类事件；
+- AgentBell 未运行、飞书离线和 `lark-cli` 失败时不阻塞 Agent；
+- 重复事件去重；
+- 已有用户 Hook 不丢失；
+- 重复安装、升级、卸载可逆；
+- GUI 启动环境没有 shell PATH 时仍能执行；
+- 通知正文默认不泄露提示词、路径和代码。

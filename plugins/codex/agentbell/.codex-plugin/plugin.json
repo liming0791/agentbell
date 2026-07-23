@@ -1,0 +1,28 @@
+{
+  "name": "agentbell",
+  "version": "0.1.0",
+  "description": "Send Codex lifecycle notifications to Feishu through AgentBell and lark-cli.",
+  "author": {
+    "name": "AgentBell contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "notifications",
+    "hooks",
+    "feishu",
+    "lark"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AgentBell",
+    "shortDescription": "Send Codex task notifications to Feishu.",
+    "longDescription": "AgentBell forwards selected Codex lifecycle events to a configured Feishu conversation through the official lark-cli.",
+    "developerName": "AgentBell contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Lifecycle notifications",
+      "Feishu delivery"
+    ],
+    "defaultPrompt": "Set up or diagnose AgentBell notifications for this Codex installation."
+  }
+}

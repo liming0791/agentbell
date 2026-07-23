@@ -1,0 +1,31 @@
+{
+  "name": "agentbell",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-CLI Agent notifications delivered through Feishu's official lark-cli.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "npm@11.16.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "check": "node ./scripts/check-structure.mjs",
+    "ci": "npm run lint && npm run check && npm run test:coverage && npm run pack:check",
+    "doctor": "node ./packages/cli/bin/agentbell.mjs doctor",
+    "lint": "eslint . --max-warnings 0",
+    "pack:check": "npm pack --workspaces --dry-run",
+    "release:verify": "node ./scripts/verify-release.mjs",
+    "setup:plan": "node ./packages/cli/bin/agentbell.mjs setup --plan",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "version:set": "node ./scripts/set-version.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.7.0"
+  }
+}
