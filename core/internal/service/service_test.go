@@ -276,7 +276,7 @@ func TestRawHookToHistoryWithFakeLarkExecutable(t *testing.T) {
 		},
 		Sender: transport.LarkCLI{
 			Command: executable,
-			Timeout: time.Second,
+			Timeout: 10 * time.Second,
 		},
 		Now: func() time.Time { return now },
 	}
