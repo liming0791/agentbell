@@ -13,7 +13,7 @@ npm ci
 npm run ci
 npm run perf:emit
 npm run build:core
-npm run release:verify -- v0.2.0-rc.1
+npm run release:verify -- v0.2.0-rc.2
 ```
 
 `npm run ci` 依次执行：
@@ -57,7 +57,7 @@ tag/manifest 校验
 -> 确定性 zip/tar.gz
 -> checksums + Technical Preview manifest
 -> 本地 HTTP bootstrap 下载/校验/执行/清理 smoke
--> GitHub artifact attestation
+-> GitHub artifact attestation（仓库能力允许时）
 -> draft GitHub Release
 -> npm pack/publish
 -> 上传 npm tgz
@@ -72,6 +72,11 @@ M0.5 没有代码签名凭据。workflow 只接受
 `AGENTBELL_SIGNATURE_STATUS=technical-preview`；其他值会失败，避免把未签名产物标成
 signed。
 
+个人账号下的 GitHub 私有仓库不支持 Artifact Attestation 持久化。仓库变量
+`AGENTBELL_ATTESTATIONS_ENABLED=false` 时，workflow 明确跳过该可选步骤，并保留
+`checksums.txt`、`release-manifest.json` 和 Actions artifact 作为发布证据；迁移到支持
+该能力的仓库后，显式把变量设为 `true`。
+
 ## npm Trusted Publishing
 
 发布 job 使用 GitHub OIDC，不把长期 `NPM_TOKEN` 存入仓库。首次发布前需要一次外部
@@ -83,7 +88,7 @@ signed。
    `liming0791/agentbell`、`release.yml`、`npm-publish`；
 4. 若 npm 要求包先存在，维护者先完成一次最小首发，再立即切换 OIDC。
 
-`v0.2.0-rc.1` 等预发布版本发布到 npm `next` dist-tag；正式版本使用 `latest`。相同版本
+`v0.2.0-rc.2` 等预发布版本发布到 npm `next` dist-tag；正式版本使用 `latest`。相同版本
 已存在时 workflow 会跳过 npm publish，因此 GitHub Release 上传可以安全重跑。
 完成上述配置后，把仓库变量 `NPM_PUBLISH_ENABLED` 设为 `true`。变量未开启时，Release
 仍会发布已验证的 Core 和两个 npm tgz，但不会向 npm registry 发起未经授权的 publish。
@@ -91,14 +96,14 @@ signed。
 ## 创建 RC
 
 ```bash
-npm run version:set -- 0.2.0-rc.1
+npm run version:set -- 0.2.0-rc.2
 npm run ci
-npm run release:verify -- v0.2.0-rc.1
+npm run release:verify -- v0.2.0-rc.2
 git add .
 git commit -m "feat: deliver M0.5 technical preview"
-git tag -a v0.2.0-rc.1 -m "AgentBell v0.2.0-rc.1"
+git tag -a v0.2.0-rc.2 -m "AgentBell v0.2.0-rc.2"
 git push origin main
-git push origin v0.2.0-rc.1
+git push origin v0.2.0-rc.2
 ```
 
 发布失败时保留 draft Release 供诊断，不对外显示为完整发布。npm 版本不可覆盖；修复后

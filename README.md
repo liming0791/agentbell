@@ -6,7 +6,7 @@ AgentBell 是一个面向 Coding Agent CLI、IDE 和 Desktop Agent 的跨平台�
 2. 把不同 CLI 的事件归一化成统一通知事件。
 3. 调用飞书官方 `lark-cli`，把完成、失败或等待授权等事件发送到指定会话。
 
-当前版本为 `v0.2.0-rc.1` Technical Preview：Go 单文件 Core、持久队列、前台
+当前版本为 `v0.2.0-rc.2` Technical Preview：Go 单文件 Core、持久队列、前台
 Service、Codex 参考 Adapter、npm bootstrap 和六目标 Release 流水线已经实现。Node.js
 Hook runtime 仅保留为 M0 迁移期原型，不是正式 Hook 数据面。
 

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
 import { detectEnvironment } from "../packages/cli/src/detect.mjs";
 import { run } from "../packages/cli/src/index.mjs";
+
+const require = createRequire(import.meta.url);
+const { version } = require("../packages/cli/package.json");
 
 async function captureLogs(callback) {
   const originalLog = console.log;
@@ -65,9 +69,9 @@ test("routes native commands to a checksum-installed Core", async (context) => {
   });
 
   const logs = await captureLogs(() => run(["core-path"]));
-  assert.match(logs[0], /0\.2\.0-rc\.1/);
+  assert.ok(logs[0].includes(version));
   await assert.rejects(
     run(["version"]),
-    /Core 0\.2\.0-rc\.1 is not installed/
+    new RegExp(`Core ${version.replaceAll(".", "\\.")} is not installed`)
   );
 });

@@ -145,9 +145,16 @@ jobs:
           path: artifacts/core
 
       - name: Attest Core artifacts
+        if: vars.AGENTBELL_ATTESTATIONS_ENABLED == 'true'
         uses: actions/attest@v4
         with:
           subject-path: artifacts/core/*
+
+      - name: Record unavailable GitHub artifact attestations
+        if: vars.AGENTBELL_ATTESTATIONS_ENABLED != 'true'
+        run: |
+          echo "GitHub artifact attestations are disabled for this repository."
+          echo "The release remains verifiable through checksums.txt, release-manifest.json and the retained Actions artifact."
 
       - name: Stage Core artifacts in a draft GitHub release
         shell: bash
