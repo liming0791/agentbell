@@ -147,7 +147,7 @@ Codex 明确要求 `task.completed`，不能由 `approval.required` 代替。
 - JSON/TOML 使用结构化合并，不覆盖整个配置文件。
 - 修改前创建带哈希的备份，写入采用临时文件 + 原子替换。
 - Adapter 使用 receipt、标记区域或完整命令指纹确认所有权，卸载时只删除自身配置。
-- `agentbell uninstall` 先预检三个 Adapter 与登录服务；npm bootstrap 等 Core 退出后
+- `agentbell uninstall` 先预检五个 Adapter 与登录服务；npm bootstrap 等 Core 退出后
   只删除当前受管版本目录，默认保留配置、队列与诊断数据。
 - 插件安装优先于直接修改用户设置。
 - 所有通知 Hook fail-open；AgentBell 故障不得阻塞原 Agent。

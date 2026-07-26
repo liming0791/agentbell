@@ -40,7 +40,7 @@ Core 本地构建：`cd core && go build ./cmd/agentbell`。
 - 后台服务必须经 `agentbell service install` 注册：macOS 使用 LaunchAgent、Windows
   使用当前用户登录计划任务、Linux 优先 systemd user 并回退 XDG Autostart。发送端使用
   配置中的 `larkCliPath` 绝对路径，不得依赖 GUI/登录服务继承 shell PATH。
-- 产品卸载使用 `agentbell uninstall` 统一预检并移除服务与三个 Adapter Hook；Core
+- 产品卸载使用 `agentbell uninstall` 统一预检并移除服务与五个 Adapter Hook；Core
   进程退出后由 npm bootstrap 删除其管理的精确版本目录，默认保留配置、队列和诊断数据。
 - Adapter 全部保持 `pilot`，未完成 `docs/adapter-contract.md` 实机验收矩阵不得标
   `verified`。

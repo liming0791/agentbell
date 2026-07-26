@@ -135,9 +135,35 @@ Codex/Claude Code/Kimi Code Go Adapter、三平台登录服务和产品级统一
   为空；实际 hooks.json 中 AgentBell Stop 为 1、AgentBell PermissionRequest 为 0，
   cmux 的 Stop/PermissionRequest 均保留。
 
+## OpenCode / Qoder Adapter 实机验收
+
+- 验收日期：2026-07-26；环境：macOS 26.4 arm64、Go 1.26.5、OpenCode 已安装
+  （`~/.opencode/bin/opencode`）、Qoder 未安装（以 `~/.qoder` 模拟配置目录验收）。
+- OpenCode：detect 正确识别 CLI 与配置目录；install 写入
+  `~/.config/opencode/plugins/agentbell.js`；verify 通过；已有用户插件（cmux）不受
+  影响；重复 install 幂等；emit `session.idle` 经插件 spawn 入队，diagnose
+  `runtimeVerified: true`；uninstall 精确删除 agentbell.js，cmux 完好。
+- Qoder：detect 通过 `$QODER_CONFIG_DIR` 识别；install 结构化合并
+  `settings.json`，用户已有 `model`/`permissions` 完好保留；verify 通过；重复
+  install 幂等；emit `Stop` 经 exec-form 命令入队，diagnose `runtimeVerified: true`；
+  uninstall 后 `model`/`permissions` 零丢失。
+- 验收中发现并修复 event.go bug：`rawEvent` 缺少 `type` 字段，OpenCode 的
+  `{"type":"session.idle"}` 被错误映射为 `agent.info`。修复后 `session.idle`
+  正确映射为 `task.completed`。
+- Fail-open：OpenCode 插件 spawn error handler 保证 Core 缺失不阻塞；Qoder Hook
+  5s timeout 保证超时不阻塞。
+- 修复后 `npm run go:check` 全绿：event 95.2%、queue 83.3%、adapter 81.1%、
+  setup 83.9%。
+
 ## 发布边界
 
 - 本切片仅为本地 dev 构建验证；版本号未 bump，未走 Release 流水线。
 - setup/test 在 Windows、Linux 尚未实机验证。
 - macOS/Windows/Linux 登录自启动代码已实现；Windows/Linux 实机登录重启仍待验。
 - npm `setup --plan` 保持只读计划行为；真实执行由 Core 提供。
+
+## M1 收尾决策
+
+- 决策日期：2026-07-26。
+- Windows/Linux 产品实机矩阵与服务登录重启验收经决策跳过，M1 阶段通过。
+- 五个产品 Adapter 均保持 Pilot 等级；Windows/Linux 实机验证延后至 M2 或按需补验。

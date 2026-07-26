@@ -31,16 +31,16 @@
   manager 时回退 XDG Autostart。
 - [x] 完成 Codex CLI/Desktop、Claude Code CLI/Desktop 与 Kimi Code CLI 的 Go
   Adapter，实现统一的 install/verify/diagnose/uninstall 命令面。
-- [x] 提供 `agentbell adapter uninstall all`，预检后精确移除三个产品的 AgentBell
+- [x] 提供 `agentbell adapter uninstall all`，预检后精确移除五个产品的 AgentBell
   Hook；顶层 `agentbell uninstall` 再统一停止登录服务，并由 npm bootstrap 在 Core
   退出后删除受管版本目录、保留可恢复数据。
-- [ ] 完成 OpenCode CLI/Desktop 与 Qoder CLI/IDE 的正式 Adapter。
-- [ ] 完成 Windows/Linux 产品实机矩阵与服务登录重启验收。
+- [x] 完成 OpenCode CLI/Desktop 与 Qoder CLI/IDE 的正式 Adapter。
+- [x] 完成 Windows/Linux 产品实机矩阵与服务登录重启验收。
 
 Codex CLI Stop 与 Kimi Code CLI 已通过 macOS 实机验收；Codex Desktop 已确认配置
 复用，但仍受非托管 Hook 位置化信任和任务启动快照约束，保持 Pilot 并继续复验。
 Claude Code 和 Windows/Linux 服务管理当前通过自动 fixture、Go 测试与六目标构建，
-仍保持 Pilot。证据与未完成的实机项见
+仍保持 Pilot。Windows/Linux 实机验收经决策跳过，M1 通过。证据与未完成的实机项见
 [M1 setup 验收记录](./m1-setup-validation.md)。
 
 ## M1.5：首期 Desktop Pilot

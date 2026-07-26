@@ -52,10 +52,12 @@ type Setup struct {
 	DryRun     bool
 	Out        io.Writer
 
-	NewCodexAdapter  func() (hookAdapter, error)
-	NewClaudeAdapter func() (hookAdapter, error)
-	NewKimiAdapter   func() (hookAdapter, error)
-	InstallService   func(context.Context) (string, error)
+	NewCodexAdapter    func() (hookAdapter, error)
+	NewClaudeAdapter   func() (hookAdapter, error)
+	NewKimiAdapter     func() (hookAdapter, error)
+	NewOpenCodeAdapter func() (hookAdapter, error)
+	NewQoderAdapter    func() (hookAdapter, error)
+	InstallService     func(context.Context) (string, error)
 }
 
 // AgentStatus describes one detected coding agent.
@@ -86,6 +88,8 @@ type Report struct {
 	CodexHook    string          `json:"codexHook,omitempty"`
 	ClaudeHook   string          `json:"claudeHook,omitempty"`
 	KimiHook     string          `json:"kimiHook,omitempty"`
+	OpenCodeHook string          `json:"openCodeHook,omitempty"`
+	QoderHook    string          `json:"qoderHook,omitempty"`
 	Service      string          `json:"service,omitempty"`
 }
 
@@ -152,6 +156,16 @@ func (setup *Setup) resolve() error {
 	if setup.NewKimiAdapter == nil {
 		setup.NewKimiAdapter = func() (hookAdapter, error) {
 			return adapter.NewKimiAdapter("", setup.StateDir)
+		}
+	}
+	if setup.NewOpenCodeAdapter == nil {
+		setup.NewOpenCodeAdapter = func() (hookAdapter, error) {
+			return adapter.NewOpenCodeAdapter("", setup.StateDir)
+		}
+	}
+	if setup.NewQoderAdapter == nil {
+		setup.NewQoderAdapter = func() (hookAdapter, error) {
+			return adapter.NewQoderAdapter("", setup.StateDir)
 		}
 	}
 	return nil
@@ -252,6 +266,10 @@ func (setup *Setup) detectAgents() []AgentStatus {
 			status.Adapter = "claude-code"
 		case "kimi":
 			status.Adapter = "kimi-code"
+		case "opencode":
+			status.Adapter = "opencode"
+		case "qoder":
+			status.Adapter = "qoder"
 		}
 		if _, err := setup.LookPath(agent.binary); err == nil {
 			status.Detected = true
@@ -319,7 +337,7 @@ func (setup *Setup) printPlan(report *Report) {
 	setup.printf("  3. 检查登录状态，未登录时运行 `lark-cli auth login --domain im`")
 	setup.printf("  4. 搜索已有群聊或创建新的通知群")
 	setup.printf("  5. 写入配置文件 %s（已存在时先备份再合并）", setup.ConfigFile)
-	setup.printf("  6. 为检测到的 Codex / Claude Code / Kimi Code 安装 AgentBell 通知钩子")
+	setup.printf("  6. 为检测到的 Codex / Claude Code / Kimi Code / OpenCode / Qoder 安装 AgentBell 通知钩子")
 	if managedServicePlatform(setup.GOOS) {
 		setup.printf(
 			"  7. 安装 %s，让通知服务登录后常驻",
@@ -631,6 +649,10 @@ func (setup *Setup) installAdapters(ctx context.Context, report *Report) error {
 			displayName, adapterID, newAdapter = "Claude Code", "claude-code", setup.NewClaudeAdapter
 		case "kimi":
 			displayName, adapterID, newAdapter = "Kimi Code", "kimi-code", setup.NewKimiAdapter
+		case "opencode":
+			displayName, adapterID, newAdapter = "OpenCode", "opencode", setup.NewOpenCodeAdapter
+		case "qoder":
+			displayName, adapterID, newAdapter = "Qoder", "qoder", setup.NewQoderAdapter
 		default:
 			setup.printf("%s：适配器尚未实现（后续切片），跳过", agent.ID)
 			continue
@@ -661,8 +683,12 @@ func (setup *Setup) installAdapters(ctx context.Context, report *Report) error {
 			report.CodexHook = result.HookPath
 		} else if agent.ID == "claude" {
 			report.ClaudeHook = result.HookPath
-		} else {
+		} else if agent.ID == "kimi" {
 			report.KimiHook = result.HookPath
+		} else if agent.ID == "opencode" {
+			report.OpenCodeHook = result.HookPath
+		} else {
+			report.QoderHook = result.HookPath
 		}
 		if _, err := hooks.Verify(); err != nil {
 			return fmt.Errorf("验证 %s 钩子失败：%w", displayName, err)
@@ -672,8 +698,12 @@ func (setup *Setup) installAdapters(ctx context.Context, report *Report) error {
 			setup.printf("Codex 首次运行或 Stop 钩子变化后，请在 `/hooks` 中审核并信任 AgentBell 钩子，然后新建任务")
 		} else if agent.ID == "claude" {
 			setup.printf("Claude Code CLI 与 Desktop 本地会话共享用户级 settings Hook")
-		} else {
+		} else if agent.ID == "kimi" {
 			setup.printf("Kimi Code 仅在会话启动时加载钩子；请关闭旧会话并启动一个新会话")
+		} else if agent.ID == "opencode" {
+			setup.printf("OpenCode 在下次启动时自动加载全局插件")
+		} else {
+			setup.printf("Qoder CLI 与 IDE 共享用户级 settings Hook")
 		}
 	}
 	return nil

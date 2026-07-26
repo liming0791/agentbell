@@ -654,3 +654,77 @@ func TestExecRunner(t *testing.T) {
 		t.Fatalf("interactive output not passed through: %q", stdout.String())
 	}
 }
+
+func TestSetupOpenCodeAndQoderAdapters(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".qoder"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{
+		captureResponses: map[string][]byte{
+			"lark-cli --version":            []byte("lark-cli version 1.0.30\n"),
+			"lark-cli config show":          []byte(`{"appId":"cli_test"}`),
+			"lark-cli auth status --verify": []byte(`{"ok":true}`),
+			`lark-cli im +chat-search --query 通知 --format json`: []byte(
+				`{"ok":true,"data":{"chats":[{"chat_id":"oc_found","name":"运维通知"}]}}`,
+			),
+		},
+		captureErrors: map[string]error{},
+	}
+	prompter := &fakePrompter{
+		confirms: []bool{true, true}, // opencode hook install, qoder hook install
+		selects:  []int{0, 0},
+		inputs:   []string{"通知"},
+	}
+	opencode := &fakeHookAdapter{id: "opencode", hookPath: "/fake/plugins/agentbell.js"}
+	qoder := &fakeHookAdapter{id: "qoder", hookPath: "/fake/settings.json"}
+	binaryDir := filepath.Join(root, "bin")
+	setup := &Setup{
+		Runner:   runner,
+		Prompter: prompter,
+		LookPath: func(name string) (string, error) {
+			if name == "lark-cli" {
+				return filepath.Join(binaryDir, name), nil
+			}
+			return "", errors.New("not found")
+		},
+		Now:        func() time.Time { return time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC) },
+		HomeDir:    home,
+		ConfigFile: filepath.Join(root, "config", "config.json"),
+		StateDir:   filepath.Join(root, "state"),
+		Out:        &bytes.Buffer{},
+		NewOpenCodeAdapter: func() (hookAdapter, error) {
+			return opencode, nil
+		},
+		NewQoderAdapter: func() (hookAdapter, error) {
+			return qoder, nil
+		},
+	}
+	report, err := setup.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opencode.installed || report.OpenCodeHook == "" {
+		t.Fatal("opencode adapter was not installed")
+	}
+	if !qoder.installed || report.QoderHook == "" {
+		t.Fatal("qoder adapter was not installed")
+	}
+	out := setup.Out.(*bytes.Buffer).String()
+	if !strings.Contains(out, "OpenCode 通知钩子已安装并验证") {
+		t.Fatalf("missing opencode install notice: %s", out)
+	}
+	if !strings.Contains(out, "Qoder 通知钩子已安装并验证") {
+		t.Fatalf("missing qoder install notice: %s", out)
+	}
+	if !strings.Contains(out, "OpenCode 在下次启动时自动加载全局插件") {
+		t.Fatalf("missing opencode guidance: %s", out)
+	}
+	if !strings.Contains(out, "Qoder CLI 与 IDE 共享用户级 settings Hook") {
+		t.Fatalf("missing qoder guidance: %s", out)
+	}
+}

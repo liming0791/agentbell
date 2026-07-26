@@ -118,6 +118,7 @@ func (notification Notification) Validate() error {
 type rawEvent struct {
 	HookEventName        string           `json:"hook_event_name"`
 	Event                string           `json:"event"`
+	Type                 string           `json:"type"`
 	ApprovalsReviewer    string           `json:"approvals_reviewer"`
 	ApprovalContext      approvalContext  `json:"approval_context"`
 	CWD                  string           `json:"cwd"`
@@ -183,6 +184,9 @@ func Normalize(adapterID, surface, runtimeName string, raw []byte, now time.Time
 	rawName := payload.HookEventName
 	if rawName == "" {
 		rawName = payload.Event
+	}
+	if rawName == "" {
+		rawName = payload.Type
 	}
 	canonical, status := canonicalEvent(rawName, payload.NotificationType)
 
@@ -282,6 +286,9 @@ func ShouldNotify(adapterID string, raw []byte) (bool, error) {
 	rawName := payload.HookEventName
 	if rawName == "" {
 		rawName = payload.Event
+	}
+	if rawName == "" {
+		rawName = payload.Type
 	}
 	if !strings.EqualFold(rawName, "PermissionRequest") &&
 		!strings.EqualFold(rawName, "approval.required") {

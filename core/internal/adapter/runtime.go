@@ -23,7 +23,9 @@ type runtimeProof struct {
 func RecordRuntimeProof(stateDir, adapterID, eventName string, seenAt time.Time) error {
 	if adapterID != codexAdapterID &&
 		adapterID != claudeAdapterID &&
-		adapterID != kimiAdapterID {
+		adapterID != kimiAdapterID &&
+		adapterID != opencodeAdapterID &&
+		adapterID != qoderAdapterID {
 		return errors.New("unsupported adapter runtime proof")
 	}
 	if eventName == "" {

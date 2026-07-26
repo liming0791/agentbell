@@ -475,14 +475,70 @@ func TestAdapterKimiCommands(t *testing.T) {
 	}
 }
 
+func TestAdapterOpenCodeCommands(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENTBELL_STATE_DIR", filepath.Join(root, "state"))
+	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(root, ".config", "opencode"))
+	commands := [][]string{
+		{"adapter", "plan", "opencode"},
+		{"adapter", "install", "opencode", "--dry-run"},
+		{"adapter", "install", "opencode"},
+		{"adapter", "verify", "opencode"},
+		{"adapter", "diagnose", "opencode"},
+		{"adapter", "detect", "opencode"},
+		{"adapter", "uninstall", "opencode"},
+	}
+	for _, arguments := range commands {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		if code := Run(arguments, strings.NewReader(""), &stdout, &stderr); code != 0 {
+			t.Fatalf("%v failed: %s", arguments, stderr.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".config", "opencode", "plugins", "agentbell.js")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("uninstall must remove the plugin file: %v", err)
+	}
+}
+
+func TestAdapterQoderCommands(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENTBELL_STATE_DIR", filepath.Join(root, "state"))
+	t.Setenv("QODER_CONFIG_DIR", filepath.Join(root, ".qoder"))
+	commands := [][]string{
+		{"adapter", "plan", "qoder"},
+		{"adapter", "install", "qoder", "--dry-run"},
+		{"adapter", "install", "qoder"},
+		{"adapter", "verify", "qoder"},
+		{"adapter", "diagnose", "qoder"},
+		{"adapter", "detect", "qoder"},
+		{"adapter", "uninstall", "qoder"},
+	}
+	for _, arguments := range commands {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		if code := Run(arguments, strings.NewReader(""), &stdout, &stderr); code != 0 {
+			t.Fatalf("%v failed: %s", arguments, stderr.String())
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".qoder", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "--adapter qoder") {
+		t.Fatalf("uninstall must remove the hooks: %s", raw)
+	}
+}
+
 func TestAdapterClaudeCommandsAndUnifiedUninstall(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("AGENTBELL_STATE_DIR", filepath.Join(root, "state"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
 	t.Setenv("KIMI_CODE_HOME", filepath.Join(root, ".kimi-code"))
+	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(root, ".config", "opencode"))
+	t.Setenv("QODER_CONFIG_DIR", filepath.Join(root, ".qoder"))
 
-	for _, id := range []string{"codex", "claude-code", "kimi-code"} {
+	for _, id := range []string{"codex", "claude-code", "kimi-code", "opencode", "qoder"} {
 		for _, arguments := range [][]string{
 			{"adapter", "plan", id},
 			{"adapter", "install", id},
@@ -511,13 +567,14 @@ func TestAdapterClaudeCommandsAndUnifiedUninstall(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 3 {
+	if len(results) != 5 {
 		t.Fatalf("unexpected uninstall results: %#v", results)
 	}
 	for _, path := range []string{
 		filepath.Join(root, ".codex", "hooks.json"),
 		filepath.Join(root, ".claude", "settings.json"),
 		filepath.Join(root, ".kimi-code", "config.toml"),
+		filepath.Join(root, ".qoder", "settings.json"),
 	} {
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -526,6 +583,9 @@ func TestAdapterClaudeCommandsAndUnifiedUninstall(t *testing.T) {
 		if strings.Contains(string(raw), "--adapter") {
 			t.Fatalf("unified uninstall left AgentBell hooks in %s: %s", path, raw)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".config", "opencode", "plugins", "agentbell.js")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unified uninstall left OpenCode plugin: %v", err)
 	}
 }
 
@@ -537,6 +597,8 @@ func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
 	t.Setenv("KIMI_CODE_HOME", filepath.Join(root, ".kimi-code"))
+	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(root, ".config", "opencode"))
+	t.Setenv("QODER_CONFIG_DIR", filepath.Join(root, ".qoder"))
 	if err := os.WriteFile(os.Getenv("AGENTBELL_CONFIG"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -620,6 +682,7 @@ func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
 		filepath.Join(root, ".codex", "hooks.json"),
 		filepath.Join(root, ".claude", "settings.json"),
 		filepath.Join(root, ".kimi-code", "config.toml"),
+		filepath.Join(root, ".qoder", "settings.json"),
 	} {
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -628,6 +691,9 @@ func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
 		if strings.Contains(string(raw), "--adapter") {
 			t.Fatalf("product uninstall left AgentBell hooks in %s: %s", path, raw)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".config", "opencode", "plugins", "agentbell.js")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("product uninstall left OpenCode plugin: %v", err)
 	}
 	if _, err := os.Stat(os.Getenv("AGENTBELL_CONFIG")); err != nil {
 		t.Fatalf("product uninstall removed preserved config: %v", err)

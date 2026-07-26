@@ -11,7 +11,7 @@ AgentBell 是一个面向 Coding Agent CLI、IDE 和 Desktop Agent 的跨平台�
 审批提醒；完成通知继续使用 `Stop`。
 
 当前版本为 `v0.2.0-rc.3` Technical Preview。M1 本地开发版本已实现 Go 单文件 Core、
-持久队列、Codex / Claude Code / Kimi Code Adapter、`agentbell setup`、
+持久队列、Codex / Claude Code / Kimi Code / OpenCode / Qoder Adapter、`agentbell setup`、
 `agentbell test`，以及 macOS LaunchAgent、Windows 登录计划任务和 Linux 用户服务
 （见 [M1 setup 验收记录](./docs/m1-setup-validation.md)）。这些 M1 能力尚未发布；
 Node.js Hook runtime 仅保留为 M0 迁移期原型，不是正式 Hook 数据面。
@@ -36,7 +36,9 @@ agentbell/
 ├─ plugins/
 │  ├─ codex/agentbell/     # Codex 插件
 │  ├─ claude/agentbell/    # Claude Code 插件
-│  └─ kimi/agentbell/      # Kimi Code CLI 插件
+│  ├─ kimi/agentbell/      # Kimi Code CLI 插件
+│  ├─ opencode/agentbell/  # OpenCode 插件
+│  └─ qoder/agentbell/     # Qoder 插件
 ├─ schemas/                # 统一事件协议
 ├─ scripts/                # 仓库校验脚本
 └─ docs/                   # 架构与开发说明
@@ -75,7 +77,7 @@ agentbell service run --foreground
 agentbell doctor --json
 agentbell queue list --state dead
 agentbell queue retry <event-id>
-agentbell adapter <detect|plan|install|verify|uninstall|diagnose> <codex|claude-code|kimi-code>
+agentbell adapter <detect|plan|install|verify|uninstall|diagnose> <codex|claude-code|kimi-code|opencode|qoder>
 agentbell adapter uninstall all [--dry-run]
 agentbell uninstall [--dry-run] [--json]
 ```
@@ -88,13 +90,13 @@ npx @agentbell/cli@latest setup
 
 这条命令（M1 切片 1 起由 Core 实现，macOS 已实机验收）负责：
 
-- 检测已安装的 Codex、Claude Code、Kimi Code CLI；
+- 检测已安装的 Codex、Claude Code、Kimi Code、OpenCode、Qoder；
 - 在用户确认后安装飞书官方 `lark-cli`；
 - 引导完成飞书应用配置和最小范围登录授权；
 - 创建或选择通知会话，并为它命名；
-- 安装对应 Hook（当前支持 Codex、Claude Code 与 Kimi Code）；
+- 安装对应 Hook（当前支持 Codex、Claude Code、Kimi Code、OpenCode 与 Qoder）；
 - 按平台安装登录自启动后台服务，并用 `agentbell test` 发送测试通知。
-- 用 `agentbell uninstall` 一次预检并移除后台服务与三个产品 Hook；npm bootstrap 随后
+- 用 `agentbell uninstall` 一次预检并移除后台服务与五个产品 Hook；npm bootstrap 随后
   删除其管理的 Core 版本，默认保留配置和队列。
 
 更完整的设计见 [架构说明](./docs/architecture.md)、[兼容矩阵](./docs/compatibility.md)、

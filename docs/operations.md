@@ -2,9 +2,9 @@
 
 最新已发布版本是 `v0.2.0-rc.3` Technical Preview，包含原生 Core、持久队列、Codex
 Adapter 和 npm bootstrap。当前 M1 工作树/本地 dev 构建另已实现 `agentbell setup`、
-`agentbell test`、Codex / Claude Code / Kimi Code Adapter，以及 macOS、Windows、
-Linux 登录自启动；这些能力尚未发布，安装 rc.3 不会自动获得它们。GUI 安装器、正式
-代码签名、OpenCode 与 Qoder 正式 Adapter 仍属于后续 M1 切片。
+`agentbell test`、Codex / Claude Code / Kimi Code / OpenCode / Qoder Adapter，以及
+macOS、Windows、Linux 登录自启动；这些能力尚未发布，安装 rc.3 不会自动获得它们。
+GUI 安装器和正式代码签名仍属于后续 M1 切片。
 
 ## 安装 Core
 
@@ -54,6 +54,8 @@ M0.5 产物未签名。`install.json` 和 `release-manifest.json` 的
 | `CODEX_HOME` | 覆盖 Codex 配置目录，主要用于测试 |
 | `CLAUDE_CONFIG_DIR` | 覆盖 Claude Code 用户配置目录，主要用于测试 |
 | `KIMI_CODE_HOME` | 覆盖 Kimi Code 配置目录，主要用于测试 |
+| `OPENCODE_CONFIG_DIR` | 覆盖 OpenCode 配置目录（默认 `~/.config/opencode`），主要用于测试 |
+| `QODER_CONFIG_DIR` | 覆盖 Qoder 配置目录（默认 `~/.qoder`），主要用于测试 |
 | `AGENTBELL_DEBUG=1` | 输出最小调试结果；仍不打印原始 Hook 输入 |
 
 ## 配置飞书通道
@@ -207,6 +209,40 @@ Adapter 向 `$KIMI_CODE_HOME/config.toml`（默认 `~/.kimi-code/config.toml`）
 StopFailure 可能只有 session 标识；Core 会按每次发生时间生成幂等键，避免同一会话后续
 回合被永久当成重复事件。数字形式的 `turn_id` 也会被正常接收。
 
+## 安装 OpenCode Adapter
+
+命令面相同，Adapter id 为 `opencode`：
+
+```text
+agentbell adapter detect opencode --json
+agentbell adapter plan opencode --json
+agentbell adapter install opencode --dry-run
+agentbell adapter install opencode
+agentbell adapter verify opencode --json
+```
+
+Adapter 向 `$OPENCODE_CONFIG_DIR/plugins/`（默认 `~/.config/opencode/plugins/`）写入
+全局 JS 插件 `agentbell.js`，订阅 `session.idle`、`session.error`、`permission.asked`
+三个事件。插件使用 `spawn` 调用 Core 绝对路径，`--fail-open` 保证 AgentBell 故障不
+阻塞 OpenCode；已有用户插件不受影响。OpenCode CLI/TUI/Desktop 共享同一插件文件。
+
+## 安装 Qoder Adapter
+
+命令面相同，Adapter id 为 `qoder`：
+
+```text
+agentbell adapter detect qoder --json
+agentbell adapter plan qoder --json
+agentbell adapter install qoder --dry-run
+agentbell adapter install qoder
+agentbell adapter verify qoder --json
+```
+
+Adapter 结构化合并 `$QODER_CONFIG_DIR/settings.json`（默认 `~/.qoder/settings.json`）
+的 `Stop` 和 `PostToolUseFailure`，使用 `claude-json-hooks` dialect 的 exec-form
+命令格式。用户已有 `model`、`permissions` 等配置完好保留；Qoder CLI/IDE/JetBrains
+共享同一配置文件。
+
 ## 运行 Service
 
 三平台使用相同命令：
@@ -245,6 +281,8 @@ agentbell doctor --json
 agentbell adapter diagnose codex
 agentbell adapter diagnose claude-code
 agentbell adapter diagnose kimi-code
+agentbell adapter diagnose opencode
+agentbell adapter diagnose qoder
 agentbell queue list --state pending
 agentbell queue list --state inflight
 agentbell queue list --state dead
@@ -265,8 +303,8 @@ agentbell uninstall --dry-run --json
 agentbell uninstall
 ```
 
-它先只读预检服务定义与三个 Adapter 配置；全部可安全处理后，先停止并移除登录服务，
-再精确删除 Codex、Claude Code、Kimi Code 的 AgentBell Hook。经 npm bootstrap 调用
+它先只读预检服务定义与五个 Adapter 配置；全部可安全处理后，先停止并移除登录服务，
+再精确删除 Codex、Claude Code、Kimi Code、OpenCode、Qoder 的 AgentBell Hook。经 npm bootstrap 调用
 时，bootstrap 会等待 Core 正常退出，再删除它管理的当前版本目录；直接运行 Core
 二进制时不做自删。配置、queue、history 和 dead 默认保留，方便恢复与诊断。
 
@@ -279,11 +317,13 @@ agentbell adapter uninstall codex --dry-run
 agentbell adapter uninstall codex
 agentbell adapter uninstall claude-code
 agentbell adapter uninstall kimi-code
+agentbell adapter uninstall opencode
+agentbell adapter uninstall qoder
 agentbell adapter uninstall all --dry-run
 agentbell adapter uninstall all
 ```
 
-`uninstall all` 先对三个 Adapter 执行只读预检，确认配置结构可安全处理后才开始实际删除。
+`uninstall all` 先对五个 Adapter 执行只读预检，确认配置结构可安全处理后才开始实际删除。
 每个 Adapter 只删除与 receipt/命令/标记区域匹配的 AgentBell 条目，保留用户其他 Hook。
 直接运行 Core 卸载命令后，可再删除对应版本的 Core 安装目录；经 npm bootstrap
 运行时该步骤已自动完成。配置、queue、history 和 dead 默认保留，避免卸载造成诊断

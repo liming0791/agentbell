@@ -77,7 +77,7 @@ Usage:
   agentbell doctor [--json]
   agentbell queue list [--state pending|inflight|dead]
   agentbell queue retry <event-id>
-  agentbell adapter <detect|plan|install|verify|uninstall|diagnose> <codex|claude-code|kimi-code>
+  agentbell adapter <detect|plan|install|verify|uninstall|diagnose> <codex|claude-code|kimi-code|opencode|qoder>
   agentbell adapter uninstall all [--dry-run]
   agentbell uninstall [--dry-run] [--json]
   agentbell setup [--dry-run] [--json]
@@ -399,12 +399,16 @@ func adapterForID(id, stateDir string) (cliAdapter, error) {
 		return adapter.NewClaudeAdapter("", stateDir)
 	case "kimi-code":
 		return adapter.NewKimiAdapter("", stateDir)
+	case "opencode":
+		return adapter.NewOpenCodeAdapter("", stateDir)
+	case "qoder":
+		return adapter.NewQoderAdapter("", stateDir)
 	default:
 		return nil, fmt.Errorf("adapter %q is not implemented", id)
 	}
 }
 
-var supportedAdapterIDs = []string{"codex", "claude-code", "kimi-code"}
+var supportedAdapterIDs = []string{"codex", "claude-code", "kimi-code", "opencode", "qoder"}
 
 func supportedAdapters(stateDir string) ([]cliAdapter, error) {
 	result := make([]cliAdapter, 0, len(supportedAdapterIDs))
@@ -455,7 +459,7 @@ func runAdapter(args []string, stdout io.Writer) error {
 		return writeJSON(stdout, selected.Diagnose())
 	case "plan":
 		if len(args) < 2 {
-			return errors.New("usage: agentbell adapter plan <codex|claude-code|kimi-code>")
+			return errors.New("usage: agentbell adapter plan <codex|claude-code|kimi-code|opencode|qoder>")
 		}
 		selected, err := adapterForID(args[1], resolved.StateDir)
 		if err != nil {
@@ -465,7 +469,7 @@ func runAdapter(args []string, stdout io.Writer) error {
 	case "install", "uninstall":
 		if len(args) < 2 {
 			return fmt.Errorf(
-				"usage: agentbell adapter %s <codex|claude-code|kimi-code|all> [--dry-run]",
+				"usage: agentbell adapter %s <codex|claude-code|kimi-code|opencode|qoder|all> [--dry-run]",
 				args[0],
 			)
 		}
@@ -507,7 +511,7 @@ func runAdapter(args []string, stdout io.Writer) error {
 		return writeJSON(stdout, result)
 	case "verify":
 		if len(args) < 2 {
-			return errors.New("usage: agentbell adapter verify <codex|claude-code|kimi-code>")
+			return errors.New("usage: agentbell adapter verify <codex|claude-code|kimi-code|opencode|qoder>")
 		}
 		selected, err := adapterForID(args[1], resolved.StateDir)
 		if err != nil {
@@ -520,7 +524,7 @@ func runAdapter(args []string, stdout io.Writer) error {
 		return writeJSON(stdout, result)
 	case "diagnose":
 		if len(args) < 2 {
-			return errors.New("usage: agentbell adapter diagnose <codex|claude-code|kimi-code>")
+			return errors.New("usage: agentbell adapter diagnose <codex|claude-code|kimi-code|opencode|qoder>")
 		}
 		selected, err := adapterForID(args[1], resolved.StateDir)
 		if err != nil {

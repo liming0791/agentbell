@@ -98,6 +98,14 @@ agentbell emit \
 
 Adapter 可以通过 stdin 传原始 JSON/TOML 事件。AgentBell 对原始内容设置大小上限，默认不持久化完整 transcript。
 
+事件名称字段按以下优先级解析（取第一个非空值）：
+
+1. `hook_event_name` — Claude Code、Codex、Qoder 等 JSON hooks 产品使用；
+2. `event` — 部分产品的通用事件字段；
+3. `type` — OpenCode 等插件事件系统使用（如 `{"type":"session.idle"}`）。
+
+三个字段均为可选字符串，Core 按上述顺序 fallback。Adapter 实现无需关心具体字段名，只需透传原始 JSON。
+
 ## 验收门槛
 
 一个 Adapter 从 Pilot 升为 Verified 前必须通过：

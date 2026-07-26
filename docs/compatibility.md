@@ -15,14 +15,14 @@
 
 | 产品 | Surface | 官方入口 | 关键事件 | 平台/范围 | 当前等级 | 首期动作 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Codex | CLI | `hooks.json`、插件 Hook | `Stop` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 0.146 Stop 黑盒复验通过（2026-07-25），Windows/Linux 产品实机待验 |
+| Codex | CLI | `hooks.json`、插件 Hook | `Stop` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 0.146 Stop 黑盒复验通过（2026-07-25），Windows/Linux 实机验收跳过 |
 | Codex | ChatGPT Desktop 本地代码会话 | 与 CLI 共享 Codex 配置层和 Hook | `Stop` | 以厂商支持平台为准；仅本地会话 | B | 与 CLI 共用 Go Adapter；Hook 重排后须重新信任并分叉/新建任务，macOS 已定位旧任务不热加载 |
-| Claude Code | CLI | settings Hook、插件 Hook | `Stop`、`StopFailure`、`Notification`、`PermissionRequest` | Windows/macOS/Linux | B | Go Adapter 已实现并通过三平台 fixture；产品实机矩阵待验 |
-| Claude Code | Desktop Code tab | 与 CLI 共享 settings、Hooks 和插件 | 同上 | Windows/macOS/Linux beta；本地会话 | B | 与 CLI 共用用户级 Go Adapter；Desktop 本地会话实机待验 |
-| OpenCode | CLI/TUI | JS/TS/npm 插件事件 | `session.idle`、`session.error`、`permission.asked` | Windows/macOS/Linux | B | M1 新增 npm 插件 |
-| OpenCode | Desktop | 配置适用于 Desktop，插件可订阅 Session 事件 | 同上 | Windows/macOS/Linux | B | M1 与 OpenCode CLI 共用适配器 |
-| Kimi Code | CLI | TOML Hook、`kimi.plugin.json` | `Stop`、`StopFailure`、`PermissionRequest` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 实机验收通过（2026-07-25），Windows/Linux 待验；`Notification` 语义尚未完成验收，不声明支持 |
-| Qoder | CLI/IDE/JetBrains 插件 | 共享 `settings.json` Hook、插件 Hook | `Stop`、`PostToolUseFailure` | CLI 三平台；IDE/JB 以厂商平台为准 | B | M1 新增 Claude-compatible dialect |
+| Claude Code | CLI | settings Hook、插件 Hook | `Stop`、`StopFailure`、`Notification`、`PermissionRequest` | Windows/macOS/Linux | B | Go Adapter 已实现并通过三平台 fixture；Windows/Linux 实机验收跳过 |
+| Claude Code | Desktop Code tab | 与 CLI 共享 settings、Hooks 和插件 | 同上 | Windows/macOS/Linux beta；本地会话 | B | 与 CLI 共用用户级 Go Adapter；Desktop 本地会话实机验收跳过 |
+| OpenCode | CLI/TUI | JS/TS/npm 插件事件 | `session.idle`、`session.error`、`permission.asked` | Windows/macOS/Linux | B | Go Adapter 已实现（全局插件模式）；Windows/Linux 实机验收跳过 |
+| OpenCode | Desktop | 配置适用于 Desktop，插件可订阅 Session 事件 | 同上 | Windows/macOS/Linux | B | 与 CLI 共用 Go Adapter；实机验收跳过 |
+| Kimi Code | CLI | TOML Hook、`kimi.plugin.json` | `Stop`、`StopFailure`、`PermissionRequest` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 实机验收通过（2026-07-25），Windows/Linux 实机验收跳过；`Notification` 语义尚未完成验收，不声明支持 |
+| Qoder | CLI/IDE/JetBrains 插件 | 共享 `settings.json` Hook、插件 Hook | `Stop`、`PostToolUseFailure` | CLI 三平台；IDE/JB 以厂商平台为准 | B | Go Adapter 已实现（claude-json-hooks dialect）；Windows/Linux 实机验收跳过 |
 | ZCode | Desktop ADE | Beta 插件市场，官方列出 Hook 组件 | 待确认 | Windows/macOS；Linux beta | B | 做插件格式与 Stop 事件 spike |
 | Tencent WorkBuddy | Desktop | 官方插件市场列出 Hook 插件，可加第三方市场 | 待确认 | Windows/macOS | B | 向厂商确认 Hook schema，并实机验证 |
 | TRAE | IDE | v3.5.66 起官方更新日志声明支持 Hooks | 预计含 `Stop` | Windows/macOS；版本/账号分批开放 | B | 按版本和账号能力探测，不静态假设 |
@@ -45,9 +45,12 @@
 因此不把本次 Desktop 结果升级为 Verified。
 Claude Code 已完成共享 user-settings Go Adapter、三平台 conformance fixture 和
 CLI/Desktop 配置复用实现；Kimi Code 已完成 Go Adapter 实现与 macOS CLI 实机验收
-（2026-07-25）。OpenCode、Qoder 等产品仍保留 M0 协议原型或 catalog 记录。公开文档
-证明产品存在确定性 Hook，不等于 AgentBell 已完成真实产品矩阵，因此不能据此标成
-Verified。
+（2026-07-25）。OpenCode 已完成全局插件 Go Adapter 实现（`opencode-plugin-events`
+dialect，事件 `session.idle`/`session.error`/`permission.asked`），CLI/TUI/Desktop
+共享同一插件文件；Qoder 已完成用户级 settings Go Adapter 实现（`claude-json-hooks`
+dialect，事件 `Stop`/`PostToolUseFailure`），CLI/IDE/JetBrains 共享配置。两者均
+保持 Pilot，产品实机矩阵待验。公开文档证明产品存在确定性 Hook，不等于 AgentBell
+已完成真实产品矩阵，因此不能据此标成 Verified。
 
 ## 公开证据
 
