@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -78,7 +79,7 @@ func TestManagerInstallWritesAndLoadsLaunchAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("plist mode = %o, want 600", info.Mode().Perm())
 	}
 	if len(runner.calls) != 3 ||

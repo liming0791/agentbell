@@ -232,37 +232,60 @@ func TestSetupDryRunCommand(t *testing.T) {
 	}
 }
 
-func writeFakeLarkCLI(t *testing.T, script string) {
+func writeFakeLarkCLI(t *testing.T, succeeds bool) string {
 	t.Helper()
 	directory := t.TempDir()
+	if runtime.GOOS == "windows" {
+		commandPath := filepath.Join(directory, "lark-cli.cmd")
+		if err := os.WriteFile(commandPath, []byte("@echo off\r\nexit /b 0\r\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		powerShellPath := filepath.Join(directory, "lark-cli.ps1")
+		script := "exit 0\n"
+		if !succeeds {
+			script = "Write-Error 'nope'\nexit 1\n"
+		}
+		if err := os.WriteFile(powerShellPath, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return commandPath
+	}
 	path := filepath.Join(directory, "lark-cli")
+	script := "#!/bin/sh\nexit 0\n"
+	if !succeeds {
+		script = "#!/bin/sh\necho nope >&2\nexit 1\n"
+	}
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return path
 }
 
-func writeTestConfig(t *testing.T) {
+func writeTestConfig(t *testing.T, larkCLIPath string) {
 	t.Helper()
 	root := t.TempDir()
-	value := `{
-		"defaultChannel":"feishu",
-		"notifications":{"events":["task.completed"],"includeSummary":false,"privacyLevel":"metadata-only"},
-		"channels":[
-			{"id":"feishu","name":"通知群","type":"feishu","chatId":"oc_test","as":"bot"},
-			{"id":"spare","name":"备用群","type":"feishu","chatId":"oc_spare","as":"user"}
-		]
-	}`
 	path := filepath.Join(root, "config.json")
-	if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+	value := &config.Config{
+		DefaultChannel: "feishu",
+		LarkCLIPath:    larkCLIPath,
+		Notifications: config.Notifications{
+			Events:         []string{"task.completed"},
+			IncludeSummary: false,
+			PrivacyLevel:   "metadata-only",
+		},
+		Channels: []config.Channel{
+			{ID: "feishu", Name: "通知群", Type: "feishu", ChatID: "oc_test", As: "bot"},
+			{ID: "spare", Name: "备用群", Type: "feishu", ChatID: "oc_spare", As: "user"},
+		},
+	}
+	if err := config.Save(path, value); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AGENTBELL_CONFIG", path)
 }
 
 func TestTestCommandSendsMessage(t *testing.T) {
-	writeTestConfig(t)
-	writeFakeLarkCLI(t, "#!/bin/sh\necho '{\"ok\":true}'\n")
+	writeTestConfig(t, writeFakeLarkCLI(t, true))
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run([]string{"test", "--json"}, strings.NewReader(""), &stdout, &stderr)
@@ -279,8 +302,7 @@ func TestTestCommandSendsMessage(t *testing.T) {
 }
 
 func TestTestCommandChannelFlagAndFailure(t *testing.T) {
-	writeTestConfig(t)
-	writeFakeLarkCLI(t, "#!/bin/sh\necho nope >&2\nexit 1\n")
+	writeTestConfig(t, writeFakeLarkCLI(t, false))
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run(
@@ -318,8 +340,7 @@ func TestTestCommandWithoutConfig(t *testing.T) {
 }
 
 func TestTestCommandHumanOutput(t *testing.T) {
-	writeTestConfig(t)
-	writeFakeLarkCLI(t, "#!/bin/sh\nexit 0\n")
+	writeTestConfig(t, writeFakeLarkCLI(t, true))
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run([]string{"test"}, strings.NewReader(""), &stdout, &stderr)

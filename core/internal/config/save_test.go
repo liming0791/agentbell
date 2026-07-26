@@ -3,14 +3,16 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-func validConfig() *Config {
+func validConfig(t *testing.T) *Config {
+	t.Helper()
 	return &Config{
 		DefaultChannel: "feishu",
-		LarkCLIPath:    "/usr/local/bin/lark-cli",
+		LarkCLIPath:    filepath.Join(t.TempDir(), "bin", "lark-cli"),
 		Notifications: Notifications{
 			Events:       []string{"task.completed", "task.failed", "approval.required"},
 			PrivacyLevel: "metadata-only",
@@ -23,7 +25,8 @@ func validConfig() *Config {
 
 func TestSaveRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.json")
-	if err := Save(path, validConfig()); err != nil {
+	value := validConfig(t)
+	if err := Save(path, value); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := Load(path)
@@ -32,21 +35,21 @@ func TestSaveRoundTrip(t *testing.T) {
 	}
 	if loaded.DefaultChannel != "feishu" || loaded.Channels[0].ChatID != "oc_test" ||
 		loaded.Notifications.PrivacyLevel != "metadata-only" ||
-		loaded.LarkCLIPath != "/usr/local/bin/lark-cli" {
+		loaded.LarkCLIPath != value.LarkCLIPath {
 		t.Fatalf("round-trip mismatch: %#v", loaded)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("expected mode 0600, got %o", info.Mode().Perm())
 	}
 	parent, err := os.Stat(filepath.Dir(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parent.Mode().Perm() != 0o700 {
+	if runtime.GOOS != "windows" && parent.Mode().Perm() != 0o700 {
 		t.Fatalf("expected parent mode 0700, got %o", parent.Mode().Perm())
 	}
 }
@@ -54,7 +57,7 @@ func TestSaveRoundTrip(t *testing.T) {
 func TestSaveInvalidWritesNothing(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.json")
-	invalid := validConfig()
+	invalid := validConfig(t)
 	invalid.DefaultChannel = "missing"
 	if err := Save(path, invalid); err == nil {
 		t.Fatal("expected validation error")
@@ -78,10 +81,10 @@ func TestSaveInvalidWritesNothing(t *testing.T) {
 
 func TestSaveOverwriteIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := Save(path, validConfig()); err != nil {
+	if err := Save(path, validConfig(t)); err != nil {
 		t.Fatal(err)
 	}
-	updated := validConfig()
+	updated := validConfig(t)
 	updated.Channels[0].ChatID = "oc_updated"
 	for index := 0; index < 2; index++ {
 		if err := Save(path, updated); err != nil {

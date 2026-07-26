@@ -143,12 +143,13 @@ func newFixture(t *testing.T) (*Setup, *fakeRunner, *fakePrompter, *fakeHookAdap
 	}
 	codex := &fakeHookAdapter{id: "codex", hookPath: "/fake/hooks.json"}
 	kimi := &fakeHookAdapter{id: "kimi-code", hookPath: "/fake/config.toml"}
+	binaryDir := filepath.Join(root, "bin")
 	setup := &Setup{
 		Runner:   runner,
 		Prompter: prompter,
 		LookPath: func(name string) (string, error) {
 			if name == "codex" || name == "lark-cli" {
-				return "/usr/local/bin/" + name, nil
+				return filepath.Join(binaryDir, name), nil
 			}
 			return "", errors.New("not found")
 		},
@@ -190,7 +191,11 @@ func TestSetupHappyPathSearchChat(t *testing.T) {
 		loaded.Channels[0].ChatID != "oc_found" || loaded.Channels[0].Name != "运维通知" {
 		t.Fatalf("config mismatch: %#v", loaded)
 	}
-	if loaded.LarkCLIPath != "/usr/local/bin/lark-cli" {
+	expectedLarkCLIPath, err := setup.LookPath("lark-cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LarkCLIPath != expectedLarkCLIPath {
 		t.Fatalf("absolute lark-cli path was not persisted: %#v", loaded)
 	}
 	if loaded.Notifications.PrivacyLevel != "metadata-only" ||
@@ -401,12 +406,13 @@ func TestSetupDetectsDesktopConfigFromOfficialEnvironmentOverrides(t *testing.T)
 func TestSetupInstallsMissingLarkCLI(t *testing.T) {
 	setup, runner, prompter, _, _ := newFixture(t)
 	installed := false
+	binaryDir := filepath.Join(t.TempDir(), "bin")
 	setup.LookPath = func(name string) (string, error) {
 		if name == "lark-cli" && !installed {
 			return "", errors.New("not found")
 		}
 		if name == "lark-cli" || name == "codex" {
-			return "/usr/local/bin/" + name, nil
+			return filepath.Join(binaryDir, name), nil
 		}
 		return "", errors.New("not found")
 	}
