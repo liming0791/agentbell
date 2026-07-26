@@ -5,7 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/liming0791/agentbell/core/internal/config"
@@ -34,11 +38,15 @@ func (permanentError) Permanent() bool {
 }
 
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	name, args, err := executableCommand(runtime.GOOS, name, args, fileExists)
+	if err != nil {
+		return nil, err
+	}
 	command := exec.CommandContext(ctx, name, args...)
 	var stderr bytes.Buffer
 	command.Stdout = nil
 	command.Stderr = &limitedWriter{writer: &stderr, remaining: 4096}
-	err := command.Run()
+	err = command.Run()
 	if err != nil {
 		if stderr.Len() > 0 {
 			return stderr.Bytes(), fmt.Errorf("%w: %s", err, stderr.String())
@@ -46,6 +54,45 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 		return nil, err
 	}
 	return nil, nil
+}
+
+func executableCommand(
+	goos string,
+	name string,
+	args []string,
+	exists func(string) bool,
+) (string, []string, error) {
+	if goos != "windows" {
+		return name, args, nil
+	}
+	extension := strings.ToLower(filepath.Ext(name))
+	if extension != ".cmd" && extension != ".bat" {
+		return name, args, nil
+	}
+	powershellShim := strings.TrimSuffix(name, filepath.Ext(name)) + ".ps1"
+	if !exists(powershellShim) {
+		return "", nil, permanentError{err: fmt.Errorf(
+			"Windows command shim %q requires adjacent PowerShell shim %q",
+			name,
+			powershellShim,
+		)}
+	}
+	powershellArgs := []string{
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		powershellShim,
+	}
+	powershellArgs = append(powershellArgs, args...)
+	return "powershell.exe", powershellArgs, nil
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 type LarkCLI struct {
@@ -83,8 +130,6 @@ func (sender LarkCLI) Send(ctx context.Context, channel config.Channel, text str
 		text,
 		"--as",
 		as,
-		"--format",
-		"json",
 	)
 	if errors.Is(sendContext.Err(), context.DeadlineExceeded) {
 		return errors.New("lark-cli notification timed out")

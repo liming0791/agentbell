@@ -1,6 +1,6 @@
 # AgentBell 兼容矩阵
 
-更新时间：2026-07-23。产品能力变化很快；每次发布 AgentBell 适配器前必须重新跑版本探测和端到端测试。
+更新时间：2026-07-26。产品能力变化很快；每次发布 AgentBell 适配器前必须重新跑版本探测和端到端测试。
 
 ## 等级说明
 
@@ -15,13 +15,13 @@
 
 | 产品 | Surface | 官方入口 | 关键事件 | 平台/范围 | 当前等级 | 首期动作 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Codex | CLI | `hooks.json`、插件 Hook | `Stop`、`PermissionRequest` | Windows/macOS/Linux | B | M0.5 参考实现；等待真实三平台验收 |
-| Codex | ChatGPT Desktop 本地代码会话 | 与 CLI 共享 Codex 配置层和 Hook | 同上 | 以厂商支持平台为准；仅本地会话 | B | 与 Codex CLI 共用参考适配器；待实机 |
-| Claude Code | CLI | settings Hook、插件 Hook | `Stop`、`StopFailure`、`Notification`、`PermissionRequest` | Windows/macOS/Linux | B | M1 实现与实机验收 |
-| Claude Code | Desktop Code tab | 与 CLI 共享 settings、Hooks 和插件 | 同上 | Windows/macOS/Linux beta；本地会话 | B | M1 与 Claude CLI 共用适配器 |
+| Codex | CLI | `hooks.json`、插件 Hook | `Stop` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 0.146 Stop 黑盒复验通过（2026-07-25），Windows/Linux 产品实机待验 |
+| Codex | ChatGPT Desktop 本地代码会话 | 与 CLI 共享 Codex 配置层和 Hook | `Stop` | 以厂商支持平台为准；仅本地会话 | B | 与 CLI 共用 Go Adapter；Hook 重排后须重新信任并分叉/新建任务，macOS 已定位旧任务不热加载 |
+| Claude Code | CLI | settings Hook、插件 Hook | `Stop`、`StopFailure`、`Notification`、`PermissionRequest` | Windows/macOS/Linux | B | Go Adapter 已实现并通过三平台 fixture；产品实机矩阵待验 |
+| Claude Code | Desktop Code tab | 与 CLI 共享 settings、Hooks 和插件 | 同上 | Windows/macOS/Linux beta；本地会话 | B | 与 CLI 共用用户级 Go Adapter；Desktop 本地会话实机待验 |
 | OpenCode | CLI/TUI | JS/TS/npm 插件事件 | `session.idle`、`session.error`、`permission.asked` | Windows/macOS/Linux | B | M1 新增 npm 插件 |
 | OpenCode | Desktop | 配置适用于 Desktop，插件可订阅 Session 事件 | 同上 | Windows/macOS/Linux | B | M1 与 OpenCode CLI 共用适配器 |
-| Kimi Code | CLI | TOML Hook、`kimi.plugin.json` | `Stop`、`StopFailure`、`PermissionRequest`、`Notification` | Windows/macOS/Linux | B | M1 替换迁移期原型并实机验收 |
+| Kimi Code | CLI | TOML Hook、`kimi.plugin.json` | `Stop`、`StopFailure`、`PermissionRequest` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 实机验收通过（2026-07-25），Windows/Linux 待验；`Notification` 语义尚未完成验收，不声明支持 |
 | Qoder | CLI/IDE/JetBrains 插件 | 共享 `settings.json` Hook、插件 Hook | `Stop`、`PostToolUseFailure` | CLI 三平台；IDE/JB 以厂商平台为准 | B | M1 新增 Claude-compatible dialect |
 | ZCode | Desktop ADE | Beta 插件市场，官方列出 Hook 组件 | 待确认 | Windows/macOS；Linux beta | B | 做插件格式与 Stop 事件 spike |
 | Tencent WorkBuddy | Desktop | 官方插件市场列出 Hook 插件，可加第三方市场 | 待确认 | Windows/macOS | B | 向厂商确认 Hook schema，并实机验证 |
@@ -36,12 +36,18 @@
 4. Qoder IDE/JetBrains 插件与 CLI 共享 Hook 配置，格式与 Claude Code 高度兼容。
 5. Kimi Code 使用自己的 TOML/插件 Hook 格式，需要单独 dialect。
 
-## M0.5 实际交付状态
+## 实际交付状态
 
 机器可读 catalog 中所有可接入产品当前均为 `pilot`。Codex 已完成 Core Adapter
-实现、生命周期 conformance fixture 和跨平台 CI；其余产品保留 M0 协议原型或 catalog
-记录，正式 Adapter 属于 M1。公开文档证明产品存在确定性 Hook，不等于 AgentBell 已完成
-真实产品矩阵，因此不能据此标成 Verified。
+实现、生命周期 conformance fixture 和跨平台 CI，并在 macOS 使用 ChatGPT.app
+内置 Codex 0.146 完成 CLI Stop 黑盒复验。Desktop 已确认共享
+`~/.codex/hooks.json`，但非托管 Hook 的位置化信任和任务启动快照仍有稳定性约束，
+因此不把本次 Desktop 结果升级为 Verified。
+Claude Code 已完成共享 user-settings Go Adapter、三平台 conformance fixture 和
+CLI/Desktop 配置复用实现；Kimi Code 已完成 Go Adapter 实现与 macOS CLI 实机验收
+（2026-07-25）。OpenCode、Qoder 等产品仍保留 M0 协议原型或 catalog 记录。公开文档
+证明产品存在确定性 Hook，不等于 AgentBell 已完成真实产品矩阵，因此不能据此标成
+Verified。
 
 ## 公开证据
 
@@ -95,6 +101,11 @@
 
 1. ZCode 官方文档说明插件包含 Hook，但未公开完整 Hook schema 和事件清单。
 2. WorkBuddy 公开文档说明支持 Hook 插件和第三方市场，但缺少可直接实现的生命周期技术参考。
-3. TRAE Hooks 刚上线，版本、地区、个人/企业账号的可见性可能不同。
+3. TRAE 从 v3.5.66 起声明支持 Hooks，版本、地区、个人/企业账号的可见性可能不同。
 4. Kimi Work Plugin Center 没有公开第三方生命周期 Hook；项目已明确延期，不用 Skill/MCP 软触发替代。
 5. Claude/Codex Desktop 的远程或云会话不能自动视为本机 Hook；需按任务实际执行位置判断。
+6. Codex `PermissionRequest` 当前不暴露有效审批人；AgentBell 不发送该事件，避免把
+   原生 `auto_review` 误报成人工待审批。恢复条件见 [TODO](../TODO.md)。
+7. Codex 没有公开的已有任务 Hook 重载接口；CLI `/hooks` 只适合审核当前已发现的
+   Hook，公开文档没有为 Desktop/IDE 提供等价的重载接口。首次安装后的可靠激活仍需
+   分叉或新建任务，恢复条件见 [TODO](../TODO.md)。

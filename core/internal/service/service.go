@@ -32,17 +32,19 @@ type Sender interface {
 }
 
 type Service struct {
-	Queue        *queue.Queue
-	LoadConfig   func() (config.Config, error)
-	Sender       Sender
-	Now          func() time.Time
-	Lease        time.Duration
-	PollInterval time.Duration
-	Backoff      []time.Duration
+	Queue         *queue.Queue
+	LoadConfig    func() (config.Config, error)
+	Sender        Sender
+	SenderFactory func(config.Config) Sender
+	Now           func() time.Time
+	Lease         time.Duration
+	PollInterval  time.Duration
+	Backoff       []time.Duration
 }
 
 func (service *Service) ProcessOne(ctx context.Context) (bool, error) {
-	if service.Queue == nil || service.LoadConfig == nil || service.Sender == nil {
+	if service.Queue == nil || service.LoadConfig == nil ||
+		(service.Sender == nil && service.SenderFactory == nil) {
 		return false, errors.New("service dependencies are incomplete")
 	}
 	now := service.now()
@@ -67,7 +69,16 @@ func (service *Service) ProcessOne(ctx context.Context) (bool, error) {
 	}
 
 	text := render.Text(item.Event, settings)
-	if err := service.Sender.Send(ctx, channel, text); err != nil {
+	sender := service.Sender
+	if service.SenderFactory != nil {
+		sender = service.SenderFactory(settings)
+	}
+	if sender == nil {
+		err = errors.New("configured sender is unavailable")
+		_, nackErr := service.Queue.Nack(item, err, now, service.backoff())
+		return true, errors.Join(err, nackErr)
+	}
+	if err := sender.Send(ctx, channel, text); err != nil {
 		backoff := service.backoff()
 		if isPermanent(err) {
 			backoff = nil

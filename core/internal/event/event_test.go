@@ -68,6 +68,64 @@ func TestNormalizeMappings(t *testing.T) {
 	}
 }
 
+func TestCodexPermissionNotificationRequiresExplicitUserReviewer(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{
+			name: "current ambiguous payload",
+			raw:  `{"hook_event_name":"PermissionRequest","permission_mode":"default"}`,
+			want: false,
+		},
+		{
+			name: "auto review",
+			raw:  `{"hook_event_name":"PermissionRequest","approvals_reviewer":"auto_review"}`,
+			want: false,
+		},
+		{
+			name: "future nested user signal",
+			raw: `{
+				"hook_event_name":"PermissionRequest",
+				"approval_context":{"approvals_reviewer":"user"}
+			}`,
+			want: true,
+		},
+		{
+			name: "future top level user signal",
+			raw:  `{"hook_event_name":"PermissionRequest","approvals_reviewer":"user"}`,
+			want: true,
+		},
+		{
+			name: "completion",
+			raw:  `{"hook_event_name":"Stop"}`,
+			want: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := ShouldNotify("codex", []byte(test.raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("ShouldNotify()=%v want=%v", got, test.want)
+			}
+		})
+	}
+	deliver, err := ShouldNotify(
+		"claude-code",
+		[]byte(`{"hook_event_name":"PermissionRequest"}`),
+	)
+	if err != nil || !deliver {
+		t.Fatalf("non-Codex approval was suppressed: deliver=%v err=%v", deliver, err)
+	}
+	if _, err := ShouldNotify("codex", []byte("{")); err == nil {
+		t.Fatal("expected malformed Codex input error")
+	}
+}
+
 func TestNormalizeRejectsInvalidInput(t *testing.T) {
 	if _, err := Normalize("codex", "cli", "host", nil, time.Now()); err == nil {
 		t.Fatal("expected empty input error")
@@ -80,6 +138,111 @@ func TestNormalizeRejectsInvalidInput(t *testing.T) {
 	}
 	if _, err := Normalize("codex", "unknown", "host", []byte("{}"), time.Now()); err == nil {
 		t.Fatal("expected invalid surface error")
+	}
+	if _, err := Normalize(
+		"kimi-code",
+		"cli",
+		"host",
+		[]byte(`{"hook_event_name":"PermissionRequest","turn_id":true}`),
+		time.Now(),
+	); err == nil {
+		t.Fatal("expected non-scalar identifier error")
+	}
+}
+
+func TestNormalizeKimiNumericAndToolIdentifiers(t *testing.T) {
+	now := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	first, err := Normalize(
+		"kimi-code",
+		"cli",
+		"host",
+		[]byte(`{
+			"hook_event_name":"PermissionRequest",
+			"session_id":"session",
+			"turn_id":17,
+			"tool_call_id":42
+		}`),
+		now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Normalize(
+		"kimi-code",
+		"cli",
+		"host",
+		[]byte(`{
+			"hook_event_name":"PermissionRequest",
+			"session_id":"session",
+			"turn_id":17,
+			"tool_call_id":43
+		}`),
+		now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.TurnID == "" || !strings.HasPrefix(first.TurnID, "sha256:") {
+		t.Fatalf("numeric turn id was not normalized: %#v", first)
+	}
+	if first.IdempotencyKey == second.IdempotencyKey {
+		t.Fatal("different tool calls must not collapse to one notification")
+	}
+}
+
+func TestNormalizeKimiSessionOnlyStopsDoNotCollapseAcrossTurns(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"Stop","session_id":"same-session"}`)
+	firstTime := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	first, err := Normalize("kimi-code", "cli", "host", raw, firstTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := Normalize("kimi-code", "cli", "host", raw, firstTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextTurn, err := Normalize("kimi-code", "cli", "host", raw, firstTime.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.IdempotencyKey != retry.IdempotencyKey {
+		t.Fatal("the same occurrence must remain deterministic")
+	}
+	if first.IdempotencyKey == nextTurn.IdempotencyKey {
+		t.Fatal("later session-only Stop events must not be permanently deduplicated")
+	}
+}
+
+func TestNormalizeClaudePromptIDProvidesStableTurnIdentity(t *testing.T) {
+	raw := []byte(`{
+		"hook_event_name":"Stop",
+		"session_id":"claude-session",
+		"prompt_id":"prompt-42"
+	}`)
+	first, err := Normalize(
+		"claude-code",
+		"cli",
+		"host",
+		raw,
+		time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := Normalize(
+		"claude-code",
+		"cli",
+		"host",
+		raw,
+		time.Date(2026, 7, 25, 10, 0, 5, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.IdempotencyKey != retry.IdempotencyKey ||
+		first.TurnID == "" ||
+		!strings.HasPrefix(first.TurnID, "sha256:") {
+		t.Fatalf("Claude prompt identity was not stable: %#v %#v", first, retry)
 	}
 }
 

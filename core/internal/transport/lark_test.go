@@ -146,6 +146,74 @@ func TestExecRunnerNotFoundAndTimeout(t *testing.T) {
 	}
 }
 
+func TestExecutableCommandUsesPowerShellForWindowsNPMShims(t *testing.T) {
+	arguments := []string{
+		"im",
+		"+messages-send",
+		"--text",
+		"quoted \" text & %PATH%",
+	}
+	name, got, err := executableCommand(
+		"windows",
+		`C:\Users\test\AppData\Roaming\npm\lark-cli.cmd`,
+		arguments,
+		func(path string) bool {
+			return path == `C:\Users\test\AppData\Roaming\npm\lark-cli.ps1`
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "powershell.exe" {
+		t.Fatalf("command = %q, want powershell.exe", name)
+	}
+	if len(got) < len(arguments)+2 ||
+		got[len(got)-1] != arguments[len(arguments)-1] ||
+		got[len(got)-4] != arguments[0] {
+		t.Fatalf("arguments were not preserved: %#v", got)
+	}
+	if got[5] != "-File" ||
+		got[6] != `C:\Users\test\AppData\Roaming\npm\lark-cli.ps1` {
+		t.Fatalf("PowerShell shim invocation is incomplete: %#v", got)
+	}
+}
+
+func TestExecutableCommandRejectsOrLeavesOtherCommands(t *testing.T) {
+	if _, _, err := executableCommand(
+		"windows",
+		`C:\npm\lark-cli.cmd`,
+		nil,
+		func(string) bool { return false },
+	); err == nil || !strings.Contains(err.Error(), "PowerShell shim") {
+		t.Fatalf("expected missing PowerShell shim error, got %v", err)
+	} else {
+		var permanent interface {
+			Permanent() bool
+		}
+		if !errors.As(err, &permanent) || !permanent.Permanent() {
+			t.Fatalf("missing PowerShell shim was not permanent: %v", err)
+		}
+	}
+	name, args, err := executableCommand(
+		"windows",
+		`C:\AgentBell\lark-cli.exe`,
+		[]string{"test"},
+		func(string) bool { return false },
+	)
+	if err != nil || name != `C:\AgentBell\lark-cli.exe` || len(args) != 1 {
+		t.Fatalf("unexpected executable resolution: name=%q args=%#v err=%v", name, args, err)
+	}
+	name, _, err = executableCommand(
+		"linux",
+		"/tmp/lark-cli.cmd",
+		nil,
+		func(string) bool { return true },
+	)
+	if err != nil || name != "/tmp/lark-cli.cmd" {
+		t.Fatalf("non-Windows command was rewritten: name=%q err=%v", name, err)
+	}
+}
+
 func TestExecRunnerHelper(t *testing.T) {
 	if os.Getenv("AGENTBELL_EXEC_HELPER") != "1" {
 		return

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-07-23",
+  "updatedAt": "2026-07-25",
   "adapters": [
     {
       "id": "codex",
@@ -10,7 +10,7 @@
       "surfaces": ["cli", "desktop"],
       "platforms": ["windows", "macos", "linux"],
       "dialect": "codex-json-hooks",
-      "events": ["Stop", "PermissionRequest"]
+      "events": ["Stop"]
     },
     {
       "id": "claude-code",
@@ -40,7 +40,7 @@
       "surfaces": ["cli"],
       "platforms": ["windows", "macos", "linux"],
       "dialect": "kimi-plugin-hooks",
-      "events": ["Stop", "StopFailure", "PermissionRequest", "Notification"]
+      "events": ["Stop", "StopFailure", "PermissionRequest"]
     },
     {
       "id": "qoder",

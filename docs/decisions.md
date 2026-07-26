@@ -63,3 +63,15 @@ ZCode、Kimi Work、WorkBuddy 已经具备不同程度的飞书、微信、Bot �
 2. Native delegated：安装器帮助用户开启厂商自带的手机通知，但明确消息不经过 AgentBell。
 
 Unified 便于统一模板、通道和审计；Native delegated 可以更快覆盖没有公开 Hook 的产品。
+
+## D6：Codex 审批通知的语义门禁
+
+状态：已确认（2026-07-25）。
+
+决策：Codex `PermissionRequest` 缺少明确的当前回合
+`approvals_reviewer=user` 时，不发送 `approval.required`。安装器只保留 Stop，并精确
+移除旧版 AgentBell 的 PermissionRequest；Core 继续抑制旧任务快照发来的模糊事件。
+
+原因：该 Hook 在原生审批路由之前触发，`permission_mode=default` 同时覆盖人工审核和
+`auto_review`。通知“需要你审批”必须证明用户真的要采取动作，不能把自动审核过程误报
+成人工待办。恢复条件由项目根 [TODO](../TODO.md) 跟踪。

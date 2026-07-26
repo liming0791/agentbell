@@ -1,9 +1,11 @@
 {
   "defaultChannel": "my-feishu",
+  "larkCliPath": "/absolute/path/to/lark-cli",
   "notifications": {
     "events": [
       "task.completed",
       "task.failed",
+      "agent.waiting",
       "approval.required"
     ],
     "includeSummary": false,
