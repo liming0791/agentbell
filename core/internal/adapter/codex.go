@@ -34,13 +34,15 @@ type AdapterPlan struct {
 }
 
 type AdapterResult struct {
-	Adapter   string `json:"adapter"`
-	Detected  bool   `json:"detected"`
-	Installed bool   `json:"installed"`
-	Changed   bool   `json:"changed"`
-	HookPath  string `json:"hookPath"`
-	Backup    string `json:"backup,omitempty"`
-	Message   string `json:"message,omitempty"`
+	Adapter         string `json:"adapter"`
+	Detected        bool   `json:"detected"`
+	Installed       bool   `json:"installed"`
+	RuntimeVerified bool   `json:"runtimeVerified"`
+	Changed         bool   `json:"changed"`
+	HookPath        string `json:"hookPath"`
+	Backup          string `json:"backup,omitempty"`
+	LastSeen        string `json:"lastSeen,omitempty"`
+	Message         string `json:"message,omitempty"`
 }
 
 type codexReceipt struct {
@@ -83,7 +85,10 @@ func NewCodexAdapter(executable, stateDir string) (*CodexAdapter, error) {
 }
 
 func (adapter *CodexAdapter) Detect() bool {
-	_, err := adapter.lookPath()("codex")
+	if _, err := adapter.lookPath()("codex"); err == nil {
+		return true
+	}
+	_, err := os.Stat(adapter.CodexHome)
 	return err == nil
 }
 
@@ -95,7 +100,7 @@ func (adapter *CodexAdapter) Plan() AdapterPlan {
 		Executable: adapter.Executable,
 		Changes: []string{
 			"merge AgentBell command hook into Stop",
-			"merge AgentBell command hook into PermissionRequest",
+			"remove legacy ambiguous PermissionRequest notification hook",
 			"write an ownership receipt for precise uninstall",
 		},
 	}
@@ -119,10 +124,12 @@ func (adapter *CodexAdapter) Install(dryRun bool) (AdapterResult, error) {
 	}
 	result.Installed = true
 	result.Changed = changed
-	if dryRun || !changed {
-		if !changed {
-			result.Message = "AgentBell Codex hooks are already installed"
-		}
+	if dryRun {
+		result.Message = "AgentBell Codex completion hook would be installed; review it in Codex /hooks"
+		return result, nil
+	}
+	if !changed {
+		result.Message = "AgentBell Codex completion hook is already installed"
 		return result, nil
 	}
 
@@ -152,6 +159,7 @@ func (adapter *CodexAdapter) Install(dryRun bool) (AdapterResult, error) {
 		return result, err
 	}
 	result.Backup = backup
+	result.Message = "AgentBell Codex completion hook is installed; review and trust it in Codex /hooks, then start a new Codex task"
 	return result, nil
 }
 
@@ -167,12 +175,11 @@ func (adapter *CodexAdapter) Verify() (AdapterResult, error) {
 	if err != nil {
 		return result, err
 	}
-	result.Installed = hasCodexHook(root, "Stop", command, commandWindows) &&
-		hasCodexHook(root, "PermissionRequest", command, commandWindows)
+	result.Installed = hasCodexHook(root, "Stop", command, commandWindows)
 	if !result.Installed {
-		return result, errors.New("AgentBell Codex hooks are incomplete")
+		return result, errors.New("AgentBell Codex completion hook is incomplete")
 	}
-	result.Message = "AgentBell Codex hooks are installed"
+	result.Message = "AgentBell Codex completion hook is installed"
 	return result, nil
 }
 
@@ -208,10 +215,16 @@ func (adapter *CodexAdapter) Uninstall(dryRun bool) (AdapterResult, error) {
 	}
 	result.Changed = changed
 	result.Installed = false
-	if dryRun || !changed {
-		if !changed {
+	if dryRun {
+		if changed {
+			result.Message = "AgentBell Codex hooks would be uninstalled"
+		} else {
 			result.Message = "AgentBell Codex hooks are not installed"
 		}
+		return result, nil
+	}
+	if !changed {
+		result.Message = "AgentBell Codex hooks are not installed"
 		return result, nil
 	}
 
@@ -224,6 +237,7 @@ func (adapter *CodexAdapter) Uninstall(dryRun bool) (AdapterResult, error) {
 	}
 	_ = os.Remove(adapter.receiptPath())
 	result.Backup = backup
+	result.Message = "AgentBell Codex hooks are uninstalled"
 	return result, nil
 }
 
@@ -231,6 +245,22 @@ func (adapter *CodexAdapter) Diagnose() AdapterResult {
 	result, err := adapter.Verify()
 	if err != nil {
 		result.Message = err.Error()
+		return result
+	}
+	proof, verified := runtimeEventProofAfterConfig(
+		adapter.StateDir,
+		codexAdapterID,
+		"task.completed",
+		adapter.hookPath(),
+	)
+	result.RuntimeVerified = verified
+	if !proof.LastSeen.IsZero() {
+		result.LastSeen = proof.LastSeen.Format(time.RFC3339Nano)
+	}
+	if verified {
+		result.Message = "AgentBell Codex Stop hook has delivered task.completed since the last config change"
+	} else {
+		result.Message = "Codex Stop hook is installed but task.completed has not been observed after the last config change; review and trust it in Codex /hooks, then start and complete a new Codex task"
 	}
 	return result
 }
@@ -316,7 +346,7 @@ func mergeCodexHooks(root map[string]any, command, commandWindows string) (bool,
 		return false, err
 	}
 	changed := false
-	for _, eventName := range []string{"Stop", "PermissionRequest"} {
+	for _, eventName := range []string{"Stop"} {
 		if hasCodexHook(root, eventName, command, commandWindows) {
 			continue
 		}
@@ -335,13 +365,39 @@ func mergeCodexHooks(root map[string]any, command, commandWindows string) (bool,
 		hooks[eventName] = groups
 		changed = true
 	}
-	if _, ok := root["description"]; !ok {
-		root["description"] = codexHooksDescription
+	removedLegacy, err := removeCodexHookEvents(
+		root,
+		command,
+		commandWindows,
+		[]string{"PermissionRequest"},
+	)
+	if err != nil {
+		return false, err
+	}
+	changed = changed || removedLegacy
+	// Codex 严格解析 hooks.json，顶层未知字段会导致整个文件被忽略；
+	// 清除早期版本写入的 description，让重复安装自愈。
+	if root["description"] == codexHooksDescription {
+		delete(root, "description")
+		changed = true
 	}
 	return changed, nil
 }
 
 func removeCodexHooks(root map[string]any, command, commandWindows string) (bool, error) {
+	return removeCodexHookEvents(
+		root,
+		command,
+		commandWindows,
+		[]string{"Stop", "PermissionRequest"},
+	)
+}
+
+func removeCodexHookEvents(
+	root map[string]any,
+	command, commandWindows string,
+	eventNames []string,
+) (bool, error) {
 	hooks, err := objectField(root, "hooks", false)
 	if err != nil {
 		return false, err
@@ -350,7 +406,7 @@ func removeCodexHooks(root map[string]any, command, commandWindows string) (bool
 		return false, nil
 	}
 	changed := false
-	for _, eventName := range []string{"Stop", "PermissionRequest"} {
+	for _, eventName := range eventNames {
 		groups, err := arrayField(hooks, eventName, false)
 		if err != nil {
 			return false, err
@@ -491,6 +547,13 @@ func writeJSONFile(path string, value any) error {
 		return err
 	}
 	encoded = append(encoded, '\n')
+	return writeFileAtomic(path, encoded)
+}
+
+func writeFileAtomic(path string, encoded []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
 	temp, err := os.CreateTemp(filepath.Dir(path), ".agentbell-*.tmp")
 	if err != nil {
 		return err

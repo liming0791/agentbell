@@ -116,20 +116,53 @@ func (notification Notification) Validate() error {
 }
 
 type rawEvent struct {
-	HookEventName        string `json:"hook_event_name"`
-	Event                string `json:"event"`
-	CWD                  string `json:"cwd"`
-	SessionID            string `json:"session_id"`
-	ThreadID             string `json:"thread_id"`
-	TaskID               string `json:"task_id"`
-	TurnID               string `json:"turn_id"`
-	IdempotencyKey       string `json:"idempotency_key"`
-	LastAssistantMessage string `json:"last_assistant_message"`
-	Message              string `json:"message"`
-	Reason               string `json:"reason"`
-	NotificationType     string `json:"notification_type"`
-	OccurredAt           string `json:"occurred_at"`
-	Timestamp            string `json:"timestamp"`
+	HookEventName        string           `json:"hook_event_name"`
+	Event                string           `json:"event"`
+	ApprovalsReviewer    string           `json:"approvals_reviewer"`
+	ApprovalContext      approvalContext  `json:"approval_context"`
+	CWD                  string           `json:"cwd"`
+	SessionID            scalarIdentifier `json:"session_id"`
+	ThreadID             scalarIdentifier `json:"thread_id"`
+	TaskID               scalarIdentifier `json:"task_id"`
+	TurnID               scalarIdentifier `json:"turn_id"`
+	PromptID             scalarIdentifier `json:"prompt_id"`
+	ToolCallID           scalarIdentifier `json:"tool_call_id"`
+	ToolUseID            scalarIdentifier `json:"tool_use_id"`
+	SourceID             scalarIdentifier `json:"source_id"`
+	IdempotencyKey       string           `json:"idempotency_key"`
+	LastAssistantMessage string           `json:"last_assistant_message"`
+	Message              string           `json:"message"`
+	Reason               string           `json:"reason"`
+	NotificationType     string           `json:"notification_type"`
+	OccurredAt           string           `json:"occurred_at"`
+	Timestamp            string           `json:"timestamp"`
+}
+
+type approvalContext struct {
+	ApprovalsReviewer string `json:"approvals_reviewer"`
+}
+
+// scalarIdentifier accepts the string identifiers used by Codex as well as
+// Kimi Code's numeric turn_id. Hook protocols are not consistent enough to
+// model these fields as plain strings without rejecting otherwise valid JSON.
+type scalarIdentifier string
+
+func (value *scalarIdentifier) UnmarshalJSON(raw []byte) error {
+	if string(raw) == "null" {
+		*value = ""
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		*value = scalarIdentifier(text)
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return errors.New("identifier must be a string or number")
+	}
+	*value = scalarIdentifier(number.String())
+	return nil
 }
 
 func Normalize(adapterID, surface, runtimeName string, raw []byte, now time.Time) (Notification, error) {
@@ -166,18 +199,30 @@ func Normalize(adapterID, surface, runtimeName string, raw []byte, now time.Time
 		break
 	}
 
-	sessionID := firstNonEmpty(payload.SessionID, payload.ThreadID)
+	sessionID := firstNonEmpty(string(payload.SessionID), string(payload.ThreadID))
+	taskID := string(payload.TaskID)
+	turnID := firstNonEmpty(string(payload.TurnID), string(payload.PromptID))
+	toolCallID := firstNonEmpty(string(payload.ToolCallID), string(payload.ToolUseID))
+	sourceID := string(payload.SourceID)
 	keyMaterial := strings.Join([]string{
 		source,
 		surface,
 		runtimeName,
 		sessionID,
-		payload.TaskID,
-		payload.TurnID,
+		taskID,
+		turnID,
+		toolCallID,
+		sourceID,
 		canonical,
 	}, "\x00")
-	if sessionID == "" && payload.TaskID == "" && payload.TurnID == "" {
+	if sessionID == "" && taskID == "" && turnID == "" && toolCallID == "" && sourceID == "" {
 		keyMaterial += "\x00" + string(raw)
+	} else if taskID == "" && turnID == "" && toolCallID == "" && sourceID == "" {
+		// Some providers, notably Kimi Code 0.29.x Stop/StopFailure, identify
+		// only the session. A session-level key suppresses every later turn for
+		// the history retention window. Use the hook occurrence time when the
+		// provider offers no turn/tool/task/notification identity.
+		keyMaterial += "\x00occurrence\x00" + occurredAt.Format(time.RFC3339Nano)
 	}
 
 	idempotencyKey := payload.IdempotencyKey
@@ -204,8 +249,8 @@ func Normalize(adapterID, surface, runtimeName string, raw []byte, now time.Time
 		Status:         status,
 		OccurredAt:     occurredAt,
 		SessionID:      opaqueIdentifier(sessionID),
-		TaskID:         opaqueIdentifier(payload.TaskID),
-		TurnID:         opaqueIdentifier(payload.TurnID),
+		TaskID:         opaqueIdentifier(taskID),
+		TurnID:         opaqueIdentifier(turnID),
 		IdempotencyKey: idempotencyKey,
 		Priority:       PriorityNormal,
 		PrivacyLevel:   PrivacyMetadataOnly,
@@ -216,6 +261,37 @@ func Normalize(adapterID, surface, runtimeName string, raw []byte, now time.Time
 		return Notification{}, err
 	}
 	return notification, nil
+}
+
+// ShouldNotify applies provider-specific truthfulness gates after normalization.
+//
+// Codex currently emits PermissionRequest before either a person or its native
+// auto-reviewer handles the request. The public Hook payload does not expose
+// the effective reviewer, so a missing reviewer cannot truthfully be presented
+// as "you need to approve". Suppress that ambiguous case. If Codex adds the
+// documented/proposed reviewer field later, explicit user-reviewed requests
+// become deliverable without changing the adapter again.
+func ShouldNotify(adapterID string, raw []byte) (bool, error) {
+	if adapterID != "codex" {
+		return true, nil
+	}
+	var payload rawEvent
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false, fmt.Errorf("invalid hook JSON: %w", err)
+	}
+	rawName := payload.HookEventName
+	if rawName == "" {
+		rawName = payload.Event
+	}
+	if !strings.EqualFold(rawName, "PermissionRequest") &&
+		!strings.EqualFold(rawName, "approval.required") {
+		return true, nil
+	}
+	reviewer := firstNonEmpty(
+		payload.ApprovalsReviewer,
+		payload.ApprovalContext.ApprovalsReviewer,
+	)
+	return strings.EqualFold(reviewer, "user"), nil
 }
 
 func sourceForAdapter(adapterID string) (string, bool) {

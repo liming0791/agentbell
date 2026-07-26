@@ -12,9 +12,10 @@ Adapter 负责把一个 Agent 产品的公开扩展入口转成 AgentBell 的统
 2. `capabilities`：动态判断当前版本实际支持的事件。
 3. `plan`：输出将执行的安装、修改和权限请求。
 4. `install`：安装插件或结构化合并 Hook。
-5. `verify`：触发或模拟最小事件，确认 AgentBell 收到。
+5. `verify`：静态检查安装结构、命令和所有权信息。
 6. `uninstall`：只删除 AgentBell 自己写入的内容。
-7. `diagnose`：返回路径、版本、Hook 状态和最近错误。
+7. `diagnose`：在 `verify` 之上检查 runtime proof，返回 Hook 是否在最后一次配置变更后
+   真正到达 Core；必要时提示 Codex `/hooks` 信任或 Kimi 新会话加载。
 
 ## Manifest
 
@@ -24,18 +25,12 @@ Adapter 负责把一个 Agent 产品的公开扩展入口转成 AgentBell 的统
 {
   "id": "qoder",
   "displayName": "Qoder",
-  "supportLevel": "verified",
+  "phase1": true,
+  "supportLevel": "pilot",
   "surfaces": ["cli", "ide", "jetbrains"],
   "platforms": ["windows", "macos", "linux"],
   "dialect": "claude-json-hooks",
-  "events": {
-    "Stop": "task.completed",
-    "PostToolUseFailure": "task.failed"
-  },
-  "install": {
-    "strategy": "settings-merge",
-    "scope": "user"
-  }
+  "events": ["Stop", "PostToolUseFailure"]
 }
 ```
 
@@ -72,12 +67,18 @@ Dialect 只描述事件协议；路径、变量名、插件根目录和配置优
 不能确认语义时映射到 `agent.info`，不得猜成任务完成。原始 Hook 输入只在规范化进程内
 使用，默认不持久化。
 
+映射表描述协议语义，不代表每个产品都能无条件发出该通知。若产品事件发生在路由决策
+之前，且载荷不能证明最终需要用户操作，Adapter 必须抑制而不是误报。Codex 当前的
+`PermissionRequest` 即属此类：只有未来明确出现 `approvals_reviewer=user` 才能发送
+`approval.required`。
+
 ## 安装规则
 
 - 默认用户级安装；项目级安装需要显式参数。
 - 能通过官方插件安装时，不直接修改用户设置。
-- 修改 JSON/JSONC/TOML 时解析后合并，保留未知字段。
-- 每个 Hook 使用稳定 ID，例如 `agentbell.task-completed`。
+- JSON 使用结构化合并；无法可靠 round-trip 的 TOML 使用带内容哈希的标记区域，
+  保留区域外原始字节，并拒绝有歧义的顶层内联配置。
+- 每个 Hook 必须有可精确识别的所有权信息：稳定 ID、命令内容或标记区域加 owner receipt。
 - 重复运行 `install` 不产生重复条目。
 - 发现同名但内容不同的 Hook 时停止并报告冲突。
 - 安装前备份；卸载根据稳定 ID 和内容哈希精确删除。
@@ -111,5 +112,6 @@ Adapter 可以通过 stdin 传原始 JSON/TOML 事件。AgentBell 对原始内�
 - GUI 启动环境没有 shell PATH 时仍能执行；
 - 通知正文默认不泄露提示词、路径和代码。
 
-M0.5 的 Codex 实现只达到 Technical Preview/Pilot。fixture 和 CI 证明实现可移植，但不
+当前 Codex、Claude Code 与 Kimi Code 实现只达到 Technical Preview/Pilot。fixture、
+静态 `verify` 和 CI 证明实现可移植，但不替代宿主信任/加载后的 runtime proof，也不
 替代产品最低/最新版在每个支持操作系统上的真实事件验收。

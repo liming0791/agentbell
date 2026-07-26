@@ -2,7 +2,12 @@ import { createRequire } from "node:module";
 
 import { detectEnvironment } from "./detect.mjs";
 import { buildSetupPlan } from "./plan.mjs";
-import { coreInstallPath, installCore, runCore } from "./core.mjs";
+import {
+  coreInstallPath,
+  installCore,
+  runCore,
+  uninstallCore
+} from "./core.mjs";
 
 const require = createRequire(import.meta.url);
 const packageMetadata = require("../package.json");
@@ -15,7 +20,10 @@ Usage:
   agentbell setup --plan
   agentbell install-core [--version <version>]
   agentbell core-path [--version <version>]
-  agentbell <version|emit|service|doctor|queue|adapter> ...
+  agentbell <setup|test|version|emit|service|doctor|queue|adapter|uninstall> ...
+
+"setup --plan" prints a local dry-run plan without the Core; plain "setup"
+and "test" are forwarded to the installed Core.
 
 The npm package bootstraps the native AgentBell Core.`);
 }
@@ -24,7 +32,21 @@ function printEnvironment(environment) {
   console.log(JSON.stringify(environment, null, 2));
 }
 
-export async function run(args) {
+export function booleanFlagEnabled(options, name) {
+  for (const option of options) {
+    if (option === name) {
+      return true;
+    }
+    if (option.startsWith(`${name}=`)) {
+      return !["false", "0"].includes(
+        option.slice(name.length + 1).toLowerCase()
+      );
+    }
+  }
+  return false;
+}
+
+export async function run(args, dependencies = {}) {
   const [command, ...options] = args;
 
   if (!command || command === "help" || command === "--help" || command === "-h") {
@@ -66,12 +88,25 @@ export async function run(args) {
     return;
   }
 
-  if (["emit", "service", "doctor", "queue", "adapter", "version"].includes(command)) {
+  if ([
+    "setup",
+    "test",
+    "emit",
+    "service",
+    "doctor",
+    "queue",
+    "adapter",
+    "version",
+    "uninstall"
+  ].includes(command)) {
     const version = packageMetadata.version;
     const executable = coreInstallPath({ version });
     let exitCode;
     try {
-      exitCode = await runCore(executable, [command, ...options]);
+      exitCode = await (dependencies.runCore || runCore)(
+        executable,
+        [command, ...options]
+      );
     } catch (error) {
       if (error?.code === "ENOENT") {
         throw new Error(
@@ -83,6 +118,18 @@ export async function run(args) {
     }
     if (exitCode !== 0) {
       throw new Error(`AgentBell Core exited with code ${exitCode}.`);
+    }
+    if (command === "uninstall" && !booleanFlagEnabled(options, "--dry-run")) {
+      const result = await (dependencies.uninstallCore || uninstallCore)({
+        version
+      });
+      if (!booleanFlagEnabled(options, "--json")) {
+        console.log(
+          result.removed
+            ? `Removed managed AgentBell Core ${version}.`
+            : `Managed AgentBell Core ${version} was already absent.`
+        );
+      }
     }
     return;
   }

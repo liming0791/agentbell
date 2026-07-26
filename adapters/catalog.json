@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-07-23",
+  "updatedAt": "2026-07-25",
   "adapters": [
     {
       "id": "codex",
@@ -18,8 +18,7 @@
       ],
       "dialect": "codex-json-hooks",
       "events": [
-        "Stop",
-        "PermissionRequest"
+        "Stop"
       ]
     },
     {
@@ -83,8 +82,7 @@
       "events": [
         "Stop",
         "StopFailure",
-        "PermissionRequest",
-        "Notification"
+        "PermissionRequest"
       ]
     },
     {

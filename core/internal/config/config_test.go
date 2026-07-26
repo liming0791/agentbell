@@ -11,6 +11,7 @@ func TestLoadAndValidate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	value := `{
 		"defaultChannel":"team",
+		"larkCliPath":"/usr/local/bin/lark-cli",
 		"notifications":{"events":["task.completed"],"includeSummary":false},
 		"channels":[{"id":"team","name":"Team","type":"feishu","chatId":"oc_test","as":"bot"}]
 	}`
@@ -27,6 +28,9 @@ func TestLoadAndValidate(t *testing.T) {
 	if channel, ok := config.Default(); !ok || channel.ChatID != "oc_test" {
 		t.Fatalf("default channel not resolved: %#v %v", channel, ok)
 	}
+	if config.LarkCLIPath != "/usr/local/bin/lark-cli" {
+		t.Fatalf("lark-cli path was not loaded: %#v", config)
+	}
 }
 
 func TestLoadErrors(t *testing.T) {
@@ -39,5 +43,18 @@ func TestLoadErrors(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected strict config error")
+	}
+
+	relativePath := filepath.Join(t.TempDir(), "relative.json")
+	if err := os.WriteFile(relativePath, []byte(`{
+		"defaultChannel":"team",
+		"larkCliPath":"bin/lark-cli",
+		"notifications":{"events":["task.completed"]},
+		"channels":[{"id":"team","type":"feishu","chatId":"oc_test","as":"bot"}]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(relativePath); err == nil {
+		t.Fatal("expected relative larkCliPath validation error")
 	}
 }

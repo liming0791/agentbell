@@ -5,6 +5,7 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   writeFile
 } from "node:fs/promises";
 import path from "node:path";
@@ -239,6 +240,44 @@ export async function installCore({
     target: target.id,
     checksum: expected,
     reused: false
+  };
+}
+
+export async function uninstallCore({
+  version,
+  platform = process.platform,
+  architecture = process.arch,
+  dataRoot
+}) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error(`Invalid AgentBell Core version: ${version}`);
+  }
+  const root = path.resolve(dataRoot || resolveDataRoot({ platform }));
+  const installPath = coreInstallPath({
+    version,
+    platform,
+    architecture,
+    dataRoot: root
+  });
+  const installDirectory = path.dirname(installPath);
+  const versionsRoot = path.join(root, "bin");
+  if (path.dirname(installDirectory) !== versionsRoot) {
+    throw new Error("Refusing to remove an AgentBell Core path outside the managed versions root.");
+  }
+  let removed = false;
+  try {
+    const info = await stat(installDirectory);
+    removed = info.isDirectory();
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await rm(installDirectory, { recursive: true, force: true });
+  return {
+    path: installPath,
+    version,
+    removed
   };
 }
 

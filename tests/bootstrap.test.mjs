@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +15,8 @@ import { test } from "node:test";
 import {
   coreInstallPath,
   installCore,
-  runCore
+  runCore,
+  uninstallCore
 } from "../packages/cli/src/core.mjs";
 import {
   resolveDataRoot,
@@ -257,6 +264,41 @@ test("rejects invalid versions and incomplete checksum manifests", async () => {
       })
     }),
     /does not contain/
+  );
+});
+
+test("removes only the requested managed Core version", async (context) => {
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "agentbell-uninstall-test-")
+  );
+  context.after(async () => {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  });
+  const installPath = coreInstallPath({
+    version: "0.2.0",
+    dataRoot: temporaryRoot
+  });
+  const retainedPath = path.join(temporaryRoot, "retained.txt");
+  await mkdir(path.dirname(installPath), { recursive: true });
+  await writeFile(installPath, "fake-core");
+  await writeFile(retainedPath, "keep");
+
+  const result = await uninstallCore({
+    version: "0.2.0",
+    dataRoot: temporaryRoot
+  });
+  assert.equal(result.removed, true);
+  await assert.rejects(readFile(installPath), /ENOENT/);
+  assert.equal(await readFile(retainedPath, "utf8"), "keep");
+
+  const repeated = await uninstallCore({
+    version: "0.2.0",
+    dataRoot: temporaryRoot
+  });
+  assert.equal(repeated.removed, false);
+  await assert.rejects(
+    uninstallCore({ version: "../bad", dataRoot: temporaryRoot }),
+    /Invalid AgentBell Core version/
   );
 });
 

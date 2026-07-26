@@ -110,6 +110,37 @@ func TestProcessOneDeliversAndAcknowledges(t *testing.T) {
 	}
 }
 
+func TestProcessOneBuildsSenderFromLoadedConfig(t *testing.T) {
+	queueValue, err := queue.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	enqueue(t, queueValue, "sender-factory", now)
+	settings := validConfig()
+	settings.LarkCLIPath = "/absolute/node/bin/lark-cli"
+	sender := &fakeSender{}
+	var receivedPath string
+	serviceValue := Service{
+		Queue: queueValue,
+		LoadConfig: func() (config.Config, error) {
+			return settings, nil
+		},
+		SenderFactory: func(loaded config.Config) Sender {
+			receivedPath = loaded.LarkCLIPath
+			return sender
+		},
+		Now: func() time.Time { return now },
+	}
+	processed, err := serviceValue.ProcessOne(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("process: %v %v", processed, err)
+	}
+	if receivedPath != settings.LarkCLIPath || sender.count != 1 {
+		t.Fatalf("factory did not receive config: path=%q sender=%#v", receivedPath, sender)
+	}
+}
+
 func TestProcessOneRetriesFailures(t *testing.T) {
 	queueValue, err := queue.Open(t.TempDir())
 	if err != nil {

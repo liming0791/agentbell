@@ -21,7 +21,8 @@ npm run release:verify -- v0.2.0-rc.3
 - ESLint；
 - 仓库结构、JSON 和双份 Adapter catalog 一致性检查；
 - Node.js 测试与 npm bootstrap 80% 行覆盖率门禁；
-- Go fmt、vet、测试、75% 总覆盖率和三个核心包 80% 覆盖率门禁；
+- Go fmt、vet、测试、75% 总覆盖率，以及 `event`、`queue`、`adapter`、`setup`
+  四个核心包的 80% 覆盖率门禁；
 - 两个 npm workspace 的 `npm pack --dry-run`。
 
 ## 持续集成

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/liming0791/agentbell/core/internal/event"
 )
@@ -14,6 +15,7 @@ var ErrNotFound = errors.New("agentbell config not found")
 
 type Config struct {
 	DefaultChannel string        `json:"defaultChannel"`
+	LarkCLIPath    string        `json:"larkCliPath,omitempty"`
 	Notifications  Notifications `json:"notifications"`
 	Channels       []Channel     `json:"channels"`
 }
@@ -57,6 +59,9 @@ func Load(path string) (Config, error) {
 func (config Config) Validate() error {
 	if config.DefaultChannel == "" {
 		return errors.New("defaultChannel is required")
+	}
+	if config.LarkCLIPath != "" && !filepath.IsAbs(config.LarkCLIPath) {
+		return errors.New("larkCliPath must be absolute")
 	}
 	ids := make(map[string]bool)
 	foundDefault := false

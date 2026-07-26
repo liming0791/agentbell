@@ -59,7 +59,7 @@ if (coverage < 75) {
   throw new Error(`Go coverage ${coverage}% is below the 75% gate.`);
 }
 
-for (const packageName of ["event", "queue", "adapter"]) {
+for (const packageName of ["event", "queue", "adapter", "setup"]) {
   const packageOutput = run(
     goExecutable,
     ["test", `./internal/${packageName}`, "-cover"],

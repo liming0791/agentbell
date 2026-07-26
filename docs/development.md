@@ -22,12 +22,26 @@
 
 ## M1：本机安装闭环与 Verified Adapters
 
-- `agentbell setup` 检测 CLI 和操作系统。
-- 经用户确认后运行 `npx @larksuite/cli@latest install`。
-- 引导 `lark-cli config init --new`、`lark-cli auth login --domain im`。
-- 获取或创建目标会话，写入 `~/.agentbell/config.json`。
-- 完成 Codex、Claude Code、OpenCode、Kimi Code、Qoder 的 CLI/Desktop 本地适配。
-- 注册系统登录自启动，提供 `agentbell test` 和产品级统一卸载。
+- [x] `agentbell setup` 检测 CLI 和操作系统。
+- [x] 经用户确认后运行 `npx @larksuite/cli@latest install`，引导 `lark-cli config init`、`lark-cli auth login --domain im`。
+- [x] 获取或创建目标会话，写入平台目录 `config.json`（macOS 为 `~/Library/Application Support/AgentBell/config.json`）。
+- [x] 提供 `agentbell test`，经 `lark-cli` 直接向默认通道发送测试消息。
+- [x] macOS 注册 LaunchAgent 登录自启动，固定 Core 与 `lark-cli` 运行路径并提供状态/卸载命令。
+- [x] Windows 注册当前用户登录计划任务；Linux 优先注册 systemd user、无可用 user
+  manager 时回退 XDG Autostart。
+- [x] 完成 Codex CLI/Desktop、Claude Code CLI/Desktop 与 Kimi Code CLI 的 Go
+  Adapter，实现统一的 install/verify/diagnose/uninstall 命令面。
+- [x] 提供 `agentbell adapter uninstall all`，预检后精确移除三个产品的 AgentBell
+  Hook；顶层 `agentbell uninstall` 再统一停止登录服务，并由 npm bootstrap 在 Core
+  退出后删除受管版本目录、保留可恢复数据。
+- [ ] 完成 OpenCode CLI/Desktop 与 Qoder CLI/IDE 的正式 Adapter。
+- [ ] 完成 Windows/Linux 产品实机矩阵与服务登录重启验收。
+
+Codex CLI Stop 与 Kimi Code CLI 已通过 macOS 实机验收；Codex Desktop 已确认配置
+复用，但仍受非托管 Hook 位置化信任和任务启动快照约束，保持 Pilot 并继续复验。
+Claude Code 和 Windows/Linux 服务管理当前通过自动 fixture、Go 测试与六目标构建，
+仍保持 Pilot。证据与未完成的实机项见
+[M1 setup 验收记录](./m1-setup-validation.md)。
 
 ## M1.5：首期 Desktop Pilot
 
@@ -40,7 +54,8 @@
 
 - 用一次性绑定码承接桌面 CLI 与飞书会话的关联。
 - 提供“通道名称、通知模板、事件开关、免打扰时间”设置。
-- 支持升级、回滚、Hook 冲突检测和插件签名校验。
+- 支持升级、回滚、Hook 冲突检测和插件签名校验；为 Codex/Claude/Kimi 使用固定、
+  跨版本的 Hook bridge，桥接到当前版本 Core，升级时不改 Hook 命令或触发重新信任。
 - 扩展跨主机、跨 relay 的幂等和团队级事件策略。
 - 增加 WSL Host Bridge；SSH、容器和 Vendor Cloud 使用显式远程 shim/relay。
 

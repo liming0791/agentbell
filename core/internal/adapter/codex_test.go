@@ -49,6 +49,9 @@ func TestCodexInstallVerifyUninstallPreservesUnknownHooks(t *testing.T) {
 	if !installed.Changed || installed.Backup == "" {
 		t.Fatalf("install did not change or backup: %#v", installed)
 	}
+	if !strings.Contains(installed.Message, "/hooks") {
+		t.Fatalf("install omitted the Codex trust reminder: %#v", installed)
+	}
 	if _, err := adapter.Install(false); err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +79,144 @@ func TestCodexInstallVerifyUninstallPreservesUnknownHooks(t *testing.T) {
 	}
 	if strings.Contains(string(value), "AgentBell") || strings.Contains(string(value), "--adapter codex") {
 		t.Fatalf("AgentBell hook was not removed: %s", value)
+	}
+}
+
+func TestCodexDiagnoseRequiresRuntimeProofAfterHookChange(t *testing.T) {
+	adapterValue := newTestCodexAdapter(t)
+	if _, err := adapterValue.Install(false); err != nil {
+		t.Fatal(err)
+	}
+	before := adapterValue.Diagnose()
+	if !before.Installed || before.RuntimeVerified ||
+		!strings.Contains(before.Message, "/hooks") {
+		t.Fatalf("unexpected pre-runtime diagnosis: %#v", before)
+	}
+	info, err := os.Stat(adapterValue.hookPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenAt := info.ModTime().Add(time.Second)
+	if err := RecordRuntimeProof(
+		adapterValue.StateDir,
+		codexAdapterID,
+		"approval.required",
+		seenAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	approvalOnly := adapterValue.Diagnose()
+	if approvalOnly.RuntimeVerified {
+		t.Fatalf("approval proof must not verify the Stop hook: %#v", approvalOnly)
+	}
+	if err := RecordRuntimeProof(
+		adapterValue.StateDir,
+		codexAdapterID,
+		"task.completed",
+		seenAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	after := adapterValue.Diagnose()
+	if !after.RuntimeVerified || after.LastSeen == "" {
+		t.Fatalf("runtime proof was not reflected: %#v", after)
+	}
+}
+
+func TestCodexInstallRemovesOnlyLegacyAgentBellPermissionHook(t *testing.T) {
+	adapterValue := newTestCodexAdapter(t)
+	command, commandWindows, err := adapterValue.commands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(adapterValue.CodexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	existing := map[string]any{
+		"hooks": map[string]any{
+			"PermissionRequest": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":           "command",
+							"command":        command,
+							"commandWindows": commandWindows,
+						},
+					},
+				},
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "user-permission-handler",
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := writeJSONObject(adapterValue.hookPath(), existing); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapterValue.Install(false); err != nil {
+		t.Fatal(err)
+	}
+	value, err := os.ReadFile(adapterValue.hookPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(value), commandWindows) ||
+		!strings.Contains(string(value), "user-permission-handler") {
+		t.Fatalf("legacy cleanup removed the wrong handler: %s", value)
+	}
+	if !strings.Contains(string(value), `"Stop"`) {
+		t.Fatalf("completion hook was not installed: %s", value)
+	}
+}
+
+func TestCodexInstallOmitsAndHealsLegacyDescription(t *testing.T) {
+	// 新安装不得写入顶层 description：Codex 严格解析 hooks.json，
+	// 未知顶层字段会导致整个文件被忽略。
+	fresh := newTestCodexAdapter(t)
+	if _, err := fresh.Install(false); err != nil {
+		t.Fatal(err)
+	}
+	value, err := os.ReadFile(fresh.hookPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(value, &root); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := root["description"]; ok {
+		t.Fatalf("install must not write a top-level description: %s", value)
+	}
+
+	// 早期版本写入的 description 在重复安装时被清除（自愈）。
+	legacy := newTestCodexAdapter(t)
+	if err := os.MkdirAll(legacy.CodexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	broken := `{
+		"description":"Lifecycle hooks including AgentBell notifications.",
+		"hooks":{}
+	}`
+	if err := os.WriteFile(legacy.hookPath(), []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Install(false); err != nil {
+		t.Fatal(err)
+	}
+	healed, err := os.ReadFile(legacy.hookPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(healed), "description") {
+		t.Fatalf("legacy description was not removed: %s", healed)
+	}
+	if _, err := legacy.Verify(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -126,8 +267,14 @@ func TestCodexPlanDiagnoseAndConstructor(t *testing.T) {
 	if diagnose.Installed || diagnose.Message == "" {
 		t.Fatalf("unexpected diagnosis: %#v", diagnose)
 	}
+	if err := os.MkdirAll(adapter.CodexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !adapter.Detect() {
+		t.Fatal("Codex App/shared config directory should count as detected")
+	}
 	result, err := adapter.Uninstall(true)
-	if err != nil || result.Changed {
+	if err != nil || result.Changed || result.Message == "" {
 		t.Fatalf("unexpected empty uninstall: %#v %v", result, err)
 	}
 }

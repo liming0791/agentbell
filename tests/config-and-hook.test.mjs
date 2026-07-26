@@ -10,6 +10,38 @@ import {
 } from "../packages/hook-runtime/src/config.mjs";
 import { handleHook } from "../packages/hook-runtime/src/index.mjs";
 
+test("resolves the platform config directory by default", (context) => {
+  const previousConfigPath = process.env.AGENTBELL_CONFIG;
+
+  context.after(() => {
+    if (previousConfigPath === undefined) {
+      delete process.env.AGENTBELL_CONFIG;
+    } else {
+      process.env.AGENTBELL_CONFIG = previousConfigPath;
+    }
+  });
+
+  delete process.env.AGENTBELL_CONFIG;
+
+  const home = os.homedir();
+  let expected;
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA ||
+      path.join(home, "AppData", "Roaming");
+    expected = path.join(appData, "AgentBell", "config.json");
+  } else if (process.platform === "darwin") {
+    expected = path.join(
+      home, "Library", "Application Support", "AgentBell", "config.json"
+    );
+  } else {
+    const configHome = process.env.XDG_CONFIG_HOME ||
+      path.join(home, ".config");
+    expected = path.join(configHome, "agentbell", "config.json");
+  }
+
+  assert.equal(resolveConfigPath(), expected);
+});
+
 test("loads configuration from AGENTBELL_CONFIG", async (context) => {
   const temporaryDirectory = await mkdtemp(
     path.join(os.tmpdir(), "agentbell-test-")

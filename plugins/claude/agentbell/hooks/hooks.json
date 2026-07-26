@@ -1,5 +1,5 @@
 {
-  "description": "Forward Claude Code completion, failure and approval events to AgentBell.",
+  "description": "Forward Claude Code completion, failure, waiting and approval events to AgentBell.",
   "hooks": {
     "Stop": [
       {
@@ -31,6 +31,22 @@
         ]
       }
     ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt|agent_needs_input",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs",
+              "claude"
+            ],
+            "timeout": 20
+          }
+        ]
+      }
+    ],
     "PermissionRequest": [
       {
         "hooks": [
@@ -48,4 +64,3 @@
     ]
   }
 }
-

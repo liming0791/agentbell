@@ -16,16 +16,16 @@ flowchart LR
     S1["CLI 原生 Hook"]
     S2["IDE / Desktop 共享 Hook"]
     S3["官方插件事件"]
-    S4["MCP / Skill 软触发"]
+    S4["经产品决策明确批准的 Assisted 软触发"]
     S1 --> A["Source Adapter"]
     S2 --> A
     S3 --> A
     S4 --> A
     A --> E["agentbell emit"]
-    E --> Q["本地持久队列"]
+    E --> N["归一化 NotificationEvent"]
+    N --> Q["本地持久队列"]
     Q --> D["AgentBell User Service"]
-    D --> N["统一 NotificationEvent"]
-    N --> P["过滤、去重、模板、隐私与优先级"]
+    D --> P["过滤、模板与通道选择"]
     P --> L["飞书官方 lark-cli"]
     L --> F["飞书单聊或群聊"]
 ```
@@ -52,7 +52,10 @@ Node.js 保留为 npm 安装入口和开发期脚手架，例如 `npx @agentbell
 - 队列：使用无 CGO 的文件系统 spool，包含
   `pending/inflight/history/dead/tmp/keys`，保存事件 ID、租约、重试次数、下次尝试时间
   和最终状态。
-- 幂等键：`source + surface + sessionId + event + turnId/taskId`。
+- 幂等键：优先使用厂商提供的 idempotency key；否则组合
+  `source + surface + runtime + session/task/turn/tool/source id + canonical event`。
+  完全无标识时加入原始输入；只有 session 的 Kimi Stop/StopFailure 还加入发生时间，
+  避免同一会话后续回合被永久折叠。
 - 默认重试：`1s/5s/30s/2m/10m`，达到上限后保留 dead-letter 供 `doctor` 查看。
 - 状态迁移先持久化目标再移除来源；启动时修复重复副本并恢复超时租约。
 
@@ -71,6 +74,10 @@ Node.js 保留为 npm 安装入口和开发期脚手架，例如 `npx @agentbell
 - Linux：`${XDG_CONFIG_HOME:-~/.config}/agentbell/config.json`
 
 Hook 配置必须写入 AgentBell 二进制的绝对路径，不能依赖 GUI 应用继承 shell 的 PATH。
+当前本地开发版本在 macOS 使用 LaunchAgent，在 Windows 使用当前用户登录计划任务，
+在 Linux 优先使用 systemd user、不可用时回退 XDG Autostart。由于 `lark-cli` 本身
+可能通过 `/usr/bin/env node` 启动，配置保存绝对 `larkCliPath`；需要 PATH 的服务定义
+会显式包含它的运行目录。
 
 ## 运行位置不是操作系统
 
@@ -97,6 +104,16 @@ Windows 用户可能同时存在 Windows Host、WSL、Docker 和 SSH Remote。�
 - 可重复执行且不破坏用户已有配置的结构化合并；
 - 健康检查与最小端到端测试。
 
+`verify` 只检查安装结构，不能证明宿主已信任或加载 Hook。每次 Hook 成功到达 Core 后，
+`emit` 会按规范化事件写入独立的 runtime proof；proof 只含 adapter/event 和时间，
+不含原始载荷或 session/task/turn 标识，不同事件并发到达也不会互相覆盖。`diagnose`
+只有在适配器要求的关键事件 proof 晚于最后一次 Hook 配置变更时才报告运行态已验证；
+Codex 明确要求 `task.completed`，不能由 `approval.required` 代替。
+
+事件映射还要经过“语义真实”门禁。Codex 当前的 `PermissionRequest` 在原生审批路由
+之前触发，而 Hook 载荷不能区分人工审核和 `auto_review`；因此缺少明确
+`approvals_reviewer=user` 的 Codex 审批事件只留下最小 runtime proof，不进入通知队列。
+
 详细协议见 [适配器协议](./adapter-contract.md)。
 
 ## 兼容等级
@@ -120,14 +137,18 @@ Windows 用户可能同时存在 Windows Host、WSL、Docker 和 SSH Remote。�
 - `subagent.completed`（默认关闭）
 - `agent.info`（未知事件的保守降级）
 
-通知默认只发送 Agent 名称、Surface、项目名、状态和时间。任务全文、路径、代码、提示词和最后回复都需要用户单独开启。
+当前 Go Adapter 固定生成 `metadata-only` 事件，只发送 Agent、事件、项目显示名和状态。
+任务全文、路径、代码、提示词、最后回复和原始 Hook JSON 均不进入队列；配置中的更高隐私
+级别仅为协议前向兼容预留，当前不会启用内容采集。
 
 ## 安装与卸载安全
 
 - 安装前输出将修改的文件、命令和权限。
 - JSON/TOML 使用结构化合并，不覆盖整个配置文件。
 - 修改前创建带哈希的备份，写入采用临时文件 + 原子替换。
-- 每条 Hook 写入 AgentBell 所有权标识，卸载时只删除自身配置。
+- Adapter 使用 receipt、标记区域或完整命令指纹确认所有权，卸载时只删除自身配置。
+- `agentbell uninstall` 先预检三个 Adapter 与登录服务；npm bootstrap 等 Core 退出后
+  只删除当前受管版本目录，默认保留配置、队列与诊断数据。
 - 插件安装优先于直接修改用户设置。
 - 所有通知 Hook fail-open；AgentBell 故障不得阻塞原 Agent。
 
