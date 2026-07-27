@@ -16,7 +16,7 @@
 
 | 任务 | 当前证据 | 状态 |
 | --- | --- | --- |
-| M2-001～004 协议与迁移骨架 | `docs/adr/0003-m2-compatible-state-and-relay.md`、`core/testdata/migrations/`、严格 sidecar/queue tests、三平台 migration matrix | 本地通过；最终 Actions 待产生 |
+| M2-001～004 协议与迁移骨架 | `docs/adr/0003-m2-compatible-state-and-relay.md`、`core/testdata/migrations/`、严格 sidecar/queue tests、三平台 migration matrix | 本地与 Actions 通过 |
 | M2-101～104 设置与策略 | `core/internal/settings/`、`policy/`、`service/m2_test.go`、delivery ledger tests | 已实现 |
 | M2-201～204 一次性绑定 | `core/internal/binding/`、`app/bind_test.go`、setup binding tests | 自动测试已实现；现有 bot 通道真实发送通过，一次性绑定仍待验 |
 | M2-301～305 bridge/升级回滚 | `installstate/`、`bridge/`、`adapter/stable_bridge_test.go`、`tests/upgrade.test.mjs`、`scripts/release-lifecycle-smoke.mjs` | 真实旧 Release asset 生命周期与 macOS 真实 LaunchAgent 迁移通过；真实新 RC 待验 |
@@ -24,7 +24,7 @@
 | M2-501～506 Relay/Remote | `relay/`、`remote/`、`remoteconfig/`、`secretstore/`、`app/remote*_test.go`、`scripts/smoke-https-relay.mjs` | 自动测试、macOS Host→Linux container stdio 与隔离 Linux TLS/HTTPS E2E 通过；独立跨主机到飞书待验 |
 | M2-601 doctor | `doctorSchemaVersion=1`、顶层 doctor golden、bridge doctor、connector runtime proof tests | 本地通过；输出脱敏 |
 | M2-602 性能/压力 | stable bridge Hook p95、Relay/32 路 fan-out/queue benchmark、96 durable item stress gate | 本地通过 |
-| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地全量门禁通过；PR head 的 Actions 待复验 |
+| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地通过；Actions run 30235694088 的 13 个 job 全绿 |
 | M2-604 实机矩阵 | 下表 | 未通过 |
 | M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | workflow 已接线且本地旧 Release asset/TLS smoke 通过；真实新 RC 未运行 |
 
@@ -140,7 +140,9 @@ inflight 记录时可能遇到 sharing violation，通道事务等待锁时可�
   完整本地 `npm run ci` 通过；`binding` 覆盖率为 80.1%，总覆盖率仍为 79.4%。
 
 交叉编译和本地重复测试仍不等于 Windows 实机产品验收，因此 M2-604 的 Windows 栏
-继续保持待验；M2-603 只在修复后的 PR head Actions 全绿后通过。
+继续保持待验。[Actions run 30235694088](https://github.com/liming0791/agentbell/actions/runs/30235694088)
+的 13 个 job 全绿，其中 Windows Node.js 22 主 job 完整通过 Node、Go 与 durable emit
+p95 门禁，M2-603 因而通过；这仍不能替代 M2-604 的 Windows 实机产品验收。
 
 ## macOS Host 到 Linux Container 的真实 stdio E2E
 
@@ -297,10 +299,9 @@ npm run perf:m2
 
 ## M2 退出前仍需补齐
 
-1. 对最终 commit 取得 GitHub Actions 全绿记录；
-2. 创建新 RC，证明真实 draft Release smoke 在 npm publish 前成功；
-3. 用真实上一 Release 和最终 draft Release 完成安装 → upgrade → Hook 字节不变 →
+1. 创建新 RC，证明真实 draft Release smoke 在 npm publish 前成功；
+2. 用真实上一 Release 和最终 draft Release 完成安装 → upgrade → Hook 字节不变 →
    fixture 发送 → rollback → uninstall，并保存 Release/CI 链接；
-4. 补齐 macOS、Windows+WSL、Linux、SSH 和 container 的端到端记录；
-5. 真实 Codex/Claude/Kimi 任务生成配置变更后的 runtime proof；
-6. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。
+3. 补齐 macOS、Windows+WSL、Linux、SSH 和 container 的端到端记录；
+4. 真实 Codex/Claude/Kimi 任务生成配置变更后的 runtime proof；
+5. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。
