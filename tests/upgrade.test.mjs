@@ -37,9 +37,18 @@ test("service transition installs bridge mode and restores legacy mode", () => {
   assert.equal(
     serviceTransitionAction({
       operation: "upgrade",
-      active: { activeVersion: "0.3.0-rc.1" }
+      active: { activeVersion: "0.3.0-rc.1" },
+      previousActive: null
     }),
     "install"
+  );
+  assert.equal(
+    serviceTransitionAction({
+      operation: "upgrade",
+      active: { activeVersion: "0.3.1" },
+      previousActive: { activeVersion: "0.3.0" }
+    }),
+    "restart"
   );
   assert.equal(
     serviceTransitionAction({
@@ -69,21 +78,23 @@ test("service transition installs bridge mode and restores legacy mode", () => {
 test("upgrade default service transition installs the stable bridge definition", async (context) => {
   const dataRoot = await temporaryDataRoot(context);
   const callsPath = path.join(dataRoot, "service-calls.txt");
-  const core = Buffer.from(
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${callsPath}'\n`
-  );
-  const bridge = Buffer.from("bridge-0.3.0");
-  const bundle = {
-    core,
-    bridge,
-    coreChecksum: sha256(core),
-    bridgeChecksum: sha256(bridge),
-    signatureStatus: "technical-preview",
-    manifest: {
-      schemaVersion: 1,
-      version: "0.3.0",
-      signatureStatus: "technical-preview"
-    }
+  const bundle = (version) => {
+    const core = Buffer.from(
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${callsPath}'\n`
+    );
+    const bridge = Buffer.from(`bridge-${version}`);
+    return {
+      core,
+      bridge,
+      coreChecksum: sha256(core),
+      bridgeChecksum: sha256(bridge),
+      signatureStatus: "technical-preview",
+      manifest: {
+        schemaVersion: 1,
+        version,
+        signatureStatus: "technical-preview"
+      }
+    };
   };
 
   await upgrade({
@@ -91,11 +102,22 @@ test("upgrade default service transition installs the stable bridge definition",
     dataRoot,
     platform: "linux",
     architecture: "x64",
-    downloadBundle: async () => bundle,
+    downloadBundle: async () => bundle("0.3.0"),
+    smokeCore: async () => {}
+  });
+  await upgrade({
+    toVersion: "0.3.1",
+    dataRoot,
+    platform: "linux",
+    architecture: "x64",
+    downloadBundle: async () => bundle("0.3.1"),
     smokeCore: async () => {}
   });
 
-  assert.equal(await readFile(callsPath, "utf8"), "service install --json\n");
+  assert.equal(
+    await readFile(callsPath, "utf8"),
+    "service install --json\nservice restart --json\n"
+  );
 });
 
 function releaseBundle(version) {

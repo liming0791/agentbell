@@ -43,6 +43,9 @@ Core 本地构建：`cd core && go build ./cmd/agentbell`。
   使用当前用户登录计划任务、Linux 优先 systemd user 并回退 XDG Autostart。发送端使用
   配置中的 `larkCliPath` 绝对路径，不得依赖 GUI/登录服务继承 shell PATH；macOS plist
   还必须显式设置安装用户的 `HOME` 和固定 `PATH`，否则后台进程可能无法读取 Keychain。
+  首次 M1→M2 upgrade 写入 active state 后必须由新 Core 执行 `service install`，把旧
+  版本化服务定义迁到 stable bridge；若失败且旧安装没有 active state，补偿必须由旧
+  Core 再执行 `service install` 恢复 legacy 定义。普通 rollback 只 restart stable bridge。
 - 产品卸载使用 `agentbell uninstall` 统一预检并移除服务与七个 Adapter Hook；Core
   进程退出后由 npm bootstrap 删除其管理的精确版本目录，默认保留配置、队列、远程
   sidecar/peer 和诊断数据；远程私钥只有同时传入删除与确认参数才可删除。

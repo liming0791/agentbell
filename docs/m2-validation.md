@@ -19,7 +19,7 @@
 | M2-001～004 协议与迁移骨架 | `docs/adr/0003-m2-compatible-state-and-relay.md`、`core/testdata/migrations/`、严格 sidecar/queue tests、三平台 migration matrix | 本地通过；最终 Actions 待产生 |
 | M2-101～104 设置与策略 | `core/internal/settings/`、`policy/`、`service/m2_test.go`、delivery ledger tests | 已实现 |
 | M2-201～204 一次性绑定 | `core/internal/binding/`、`app/bind_test.go`、setup binding tests | 自动测试已实现；现有 bot 通道真实发送通过，一次性绑定仍待验 |
-| M2-301～305 bridge/升级回滚 | `installstate/`、`bridge/`、`adapter/stable_bridge_test.go`、`tests/upgrade.test.mjs`、`scripts/release-lifecycle-smoke.mjs` | 真实旧 Release asset 到本地工作树候选通过；真实新 RC 待验 |
+| M2-301～305 bridge/升级回滚 | `installstate/`、`bridge/`、`adapter/stable_bridge_test.go`、`tests/upgrade.test.mjs`、`scripts/release-lifecycle-smoke.mjs` | 真实旧 Release asset 生命周期与 macOS 真实 LaunchAgent 迁移通过；真实新 RC 待验 |
 | M2-401～404 Hook/插件签名 | `adapter/hook_audit_test.go`、`pluginverify/`、`tests/plugin-bundles.test.mjs`、`tests/release-workflow.test.mjs` | 自动测试已实现；真实 tag keyless bundle 待验 |
 | M2-501～506 Relay/Remote | `relay/`、`remote/`、`remoteconfig/`、`secretstore/`、`app/remote*_test.go`、`scripts/smoke-https-relay.mjs` | 自动测试、macOS Host→Linux container stdio 与隔离 Linux TLS/HTTPS E2E 通过；独立跨主机到飞书待验 |
 | M2-601 doctor | `doctorSchemaVersion=1`、顶层 doctor golden、bridge doctor、connector runtime proof tests | 本地通过；输出脱敏 |
@@ -30,7 +30,7 @@
 
 2026-07-27 本地最终门禁：
 
-- Node.js：87 项测试全部通过，生产模块行覆盖率 82.02%，门禁通过；
+- Node.js：89 项测试全部通过，生产模块行覆盖率 82.47%，门禁通过；
 - Go：fmt/vet/fuzz/测试与覆盖率门禁通过，总覆盖率 79.6%；所有规定的 M2 数据面包
   均不低于 80%；
 - `go test -race ./... -count=1` 全包通过；
@@ -68,7 +68,42 @@ schema v1 metadata，绕过了真实 M1→M2 首次迁移。新增真实 M1 meta
 候选二进制的 commit ldflag 取当前 `HEAD`
 `0765cd8cdcf01e761bbc4e6c2d1f639f09709747`，但工作树包含未提交改动，不能把该哈希解释为
 候选源码的完整 provenance；restart callback 也不等于真实 LaunchAgent/计划任务/systemd
-重启。新 RC 的 draft Release 下载复验、真实服务迁移与多平台证据仍未完成。
+重启。该隔离 smoke 当时仍缺真实服务迁移；下节已补 macOS，真实新 RC 的 draft
+Release 下载复验和 Windows/Linux 证据仍未完成。
+
+## macOS 真实 LaunchAgent 的 M1→M2 迁移
+
+2026-07-27 在 macOS 26.4 arm64 上，使用 commit `78c9312f124a` 构建
+`0.3.0-rc.1` Core 与 stable bridge。迁移对象是正在运行的开发期 M1 形态：
+LaunchAgent `com.agentbell.service` 直接指向工作树开发 Core，`active.json` 不存在，
+队列为 history 78、pending/inflight/dead 均为 0。
+
+迁移前将原 plist、当前 Core、`config.json` 与受管 `bin/` 复制到权限为 `0700` 的
+`~/Library/Application Support/AgentBell/backups/m2-migration-20260727T025505Z/`；
+备份 plist/Core 的 SHA-256 与迁移前对象一致。当前 Core 被按原字节登记为本地
+`0.2.0-local.20260725` legacy previous，使自动补偿可恢复完全相同的二进制，而不是
+替换为另一个 Release。
+
+只读 preflight 扫描 78 个队列 item，确认没有部分成功 ledger，四个 M2 sidecar 均未
+出现。首次实机执行前发现 bootstrap 的生产默认路径只调用
+`service restart --json`：自动测试因注入 callback 而没有证明 plist 会迁移。按 TDD
+先加入服务动作决策与默认生产路径集成测试，再修复为：
+
+- 首次无 active state 的 upgrade 由新 Core 执行 `service install --json`；
+- 没有旧 active state 的失败补偿由旧 Core 执行 `service install --json`，恢复 legacy；
+- 已有 M2 active state 的正常升级、补偿和显式 rollback 只执行
+  `service restart --json`。
+
+真实切换提交 transaction 后，结果为 active `0.3.0-rc.1`、previous
+`0.2.0-local.20260725`、generation 2；plist 固定为
+`bin/bridge/v1/agentbell-bridge service-v1`，LaunchAgent 以新进程保持 running。
+active 中 Core/bridge checksum 与实物一致，transaction 为 committed，队列计数没有
+变化。随后向 stable bridge 注入一条 metadata-only Codex Desktop Stop fixture，
+后台 LaunchAgent 完成真实飞书投递：history 78→79，pending/inflight/dead 仍为 0。
+
+该记录证明 macOS 本机真实服务定义迁移和 stable bridge → durable queue →
+LaunchAgent → 飞书链路；没有人为注入服务启动失败，因此自动补偿仍由自动故障测试
+证明。Windows/Linux 服务迁移、真实 tag/draft Release 下载和产品 Hook 字节不变仍待验。
 
 ## macOS Host 到 Linux Container 的真实 stdio E2E
 
@@ -200,9 +235,9 @@ npm run perf:m2
 | --- | --- | --- | --- | --- |
 | 飞书 user/bot 一次性绑定 | 既有 bot 通道直接发送通过；一次性绑定与 user 模式待验 | 待验 | 待验 | Host 绑定后复用，待验 |
 | 设置/模板/免打扰/多通道 | 待验 | 待验 | 待验 | Host policy，待验 |
-| 安装、升级、自动回滚 | 待验 | 待验 | 待验 | shim 独立升级，待验 |
+| 安装、升级、自动回滚 | 真实 M1→本地候选升级通过；自动回滚仅自动故障测试 | 待验 | 待验 | shim 独立升级，待验 |
 | Codex/Claude/Kimi stable Hook | 待验 | 待验 | 待验 | 按产品运行位置待验 |
-| 登录服务重启/断网恢复 | 待验 | 待验 | 待验 | 待验 |
+| 登录服务重启/断网恢复 | LaunchAgent 迁移重启与后台投递通过；断网待验 | 待验 | 待验 | 待验 |
 | WSL host-pull，无 listener | 不适用 | 待验 | 不适用 | 待验 |
 | SSH strict host-key + tunnel | 可作 Host，待验 | 可作 Host，待验 | 可作 Host，待验 | 待验 |
 | Container stdio/HTTPS | 本机 Linux arm64 container stdio host-pull 与隔离 TLS/HTTPS E2E 通过；真实飞书待验 | 可作 Host，待验 | 同 Host 双 container TLS/HTTPS E2E 通过；独立主机待验 | container stdio 与 TLS/HTTPS 本机通过；跨主机待验 |
@@ -227,8 +262,8 @@ npm run perf:m2
 
 1. 对最终 commit 取得 GitHub Actions 全绿记录；
 2. 创建新 RC，证明真实 draft Release smoke 在 npm publish 前成功；
-3. 用真实上一 Release 完成安装 → upgrade → Hook 字节不变 → fixture 发送 →
-   rollback → uninstall，并保存 Release/CI 链接；
+3. 用真实上一 Release 和最终 draft Release 完成安装 → upgrade → Hook 字节不变 →
+   fixture 发送 → rollback → uninstall，并保存 Release/CI 链接；
 4. 补齐 macOS、Windows+WSL、Linux、SSH 和 container 的端到端记录；
 5. 真实 Codex/Claude/Kimi 任务生成配置变更后的 runtime proof；
 6. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。

@@ -35,9 +35,11 @@ M2 不改变 AgentBell 的产品边界：优先使用公开 Hook，不注入 Age
   `upgrade`/`rollback`/`versions`、smoke 与失败补偿。App 已从 active state 严格解析
   当前 Core/bridge/generation，三个 Adapter 和三平台 Service 定义均可固定到 stable
   bridge；`service restart`、`bridge doctor` 和首次 `install-core` 初始化 active state
-  也已接通。严格 sidecar/部分投递账本回滚 preflight 已完成；最终 Release 迁移 smoke、
-  真实 Release 运行和三平台实机升级/回滚尚未完成，因此仍不能把自动测试解释为已发布
-  的升级产品流程。
+  也已接通。首次 M1→M2 切换由新 Core 执行 `service install`，失败时可由旧 Core
+  恢复 legacy 服务定义；后续 rollback 只 restart stable bridge。严格 sidecar/部分
+  投递账本回滚 preflight 已完成；macOS 真实 LaunchAgent 已完成备份迁移和后台飞书
+  投递，最终 Release 运行及 Windows/Linux 实机升级/回滚尚未完成，因此仍不能把局部
+  实机结果解释为已发布的升级产品流程。
 - Hook 冲突审计、只修复 AgentBell 自有条目的 reconcile 命令，以及插件
   manifest/file-set/兼容范围/身份策略校验域已进入 Core。外部 Hook 只报告不删除；
   基于官方 `sigstore-go` 的 exact-artifact、Fulcio/Rekor 与固定 OIDC/repository/workflow
@@ -377,7 +379,7 @@ journal；npm bootstrap 本地实现恢复命令，不能依赖当前 active Cor
 | M2-301 | bridge 二进制 | 六目标 `agentbell-bridge` | stdin 边界、路径逃逸、active 损坏、fail-open 测试 |
 | M2-302 | 版本指针 | active/previous 原子状态 | 并发读切换、崩溃恢复、checksum 校验 |
 | M2-303 | Adapter 迁移 | Codex/Claude/Kimi 固定 bridge 命令 | 现有 Hook 精确迁移；Codex 信任 hash 只变化一次 |
-| M2-304 | Service 迁移 | 三平台服务固定 bridge 命令 | upgrade 不重写服务定义；rollback 可恢复 |
+| M2-304 | Service 迁移 | 三平台服务固定 bridge 命令 | 首次 M1→M2 install stable bridge 定义；后续 upgrade 不重写；rollback 可恢复 |
 | M2-305 | bootstrap upgrade | install/upgrade/rollback/versions | smoke 失败自动回滚；旧版本保留策略 |
 
 ### P4：冲突检测与插件签名

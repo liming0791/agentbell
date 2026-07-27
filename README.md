@@ -102,8 +102,9 @@ agentbell uninstall [--dry-run] [--json] [--delete-remote-credential --confirm-d
 metadata-only outbox、`remote test`、独立 Host connector registry、WSL/SSH/container
 无监听配对/拉取、HTTPS push 和后台调度。真实旧 Release 到本地候选的 lifecycle、
 macOS Host→Linux container stdio 以及隔离 Linux container TLS/HTTPS E2E 已通过。
-它们仍是开发中能力：三平台实机、独立跨主机端到端和真实新 RC Release 流程尚未补齐，
-不能把这些局部证据解释为可用的 M2 产品流程。准确进度见
+macOS 真实 M1 形态的 LaunchAgent 也已备份后迁移到 stable bridge，并通过后台飞书
+投递；它们仍是开发中能力：Windows/Linux 实机、独立跨主机端到端和真实新 RC Release
+流程尚未补齐，不能把这些局部证据解释为可用的 M2 产品流程。准确进度见
 [M2 实施计划](./docs/m2-execution-plan.md#当前实现进度)。
 
 ## 目标体验

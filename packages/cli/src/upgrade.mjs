@@ -904,11 +904,14 @@ async function defaultRestartService({ corePath }) {
 export function serviceTransitionAction({
   operation,
   active,
+  previousActive,
   compensation = false
 }) {
-  if (operation === "upgrade" &&
-      (!compensation || active === null)) {
-    return "install";
+  if (operation === "upgrade") {
+    if (compensation) {
+      return active === null ? "install" : "restart";
+    }
+    return previousActive === null ? "install" : "restart";
   }
   return "restart";
 }
@@ -917,6 +920,7 @@ async function defaultUpgradeService(request) {
   const action = serviceTransitionAction({
     operation: "upgrade",
     active: request.active,
+    previousActive: request.previousActive,
     compensation: request.compensation
   });
   const code = await runExecutable(
@@ -1734,7 +1738,8 @@ export async function upgrade({
     await restartService({
       corePath,
       bridgePath,
-      active: nextActive
+      active: nextActive,
+      previousActive: active
     });
     await writeJournal(dataRoot, transaction, "committed");
     return {

@@ -95,7 +95,8 @@ npm 发布前通过与 PR CI 相同的 `smoke:https`，不会用重新临时构�
 安装 Core、stable bridge 和 `active.json`。Release workflow 会先下载上一正式 RC，
 以 M1 真实无 `schemaVersion` 的 `install.json` 作为起点，验证旧版本被纳入
 `previous`、升级前后三个稳定 Hook 字节不变、fixture 经 bridge 入队、升级和回滚后的
-bridge doctor 均健康，以及产品卸载 dry-run；真实服务迁移和飞书发送闭环仍由
+bridge doctor 均健康，以及产品卸载 dry-run。macOS 真实 LaunchAgent 的备份迁移和
+stable bridge → 后台服务 → 飞书闭环已通过；Windows/Linux 的真实服务迁移仍由
 [M2 实施计划](./m2-execution-plan.md) 的实机矩阵跟踪。
 
 五个插件在同一 Release 中生成严格文件 manifest，并使用固定 GitHub

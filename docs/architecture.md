@@ -70,6 +70,12 @@ generation-aware runtime proof、stable Service 定义和 `service restart`；�
 升级/Hook 字节不变/回滚/卸载的自动 smoke 已接入发布流水线，真实新 RC 运行尚未完成。
 首次从 M1 迁移时，bootstrap 会识别并校验旧式无 `schemaVersion` 的 `install.json`；
 只有一个有效旧版本时自动纳入 `previous`，存在多个候选时要求显式 `--from`，不能猜测。
+首次切换在 active state 落盘后由新 Core 执行 `service install`，把原先直接调用
+版本化 Core 的平台服务定义改为 stable bridge；若切换失败且旧安装没有 active state，
+补偿会在恢复旧状态后由旧 Core 重装 legacy 服务定义。已有 M2 active state 的升级和
+显式 rollback 继续只重启 stable bridge。macOS 真实 LaunchAgent 已完成一次
+M1 形态到本地 `0.3.0-rc.1` 候选的备份迁移和后台飞书投递；Windows/Linux 与真实
+Release 仍待验。
 rollback 保留当前协议版本的 stable bridge，并从 active state 校验其独立 checksum；
 安装事务 id 与后续 activation/rollback 事务 id 不要求相同。
 
