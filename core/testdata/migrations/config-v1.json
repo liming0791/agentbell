@@ -1,0 +1,19 @@
+{
+  "defaultChannel": "fixture",
+  "notifications": {
+    "events": [
+      "task.completed",
+      "task.failed"
+    ],
+    "includeSummary": false
+  },
+  "channels": [
+    {
+      "id": "fixture",
+      "name": "Migration fixture",
+      "type": "feishu",
+      "chatId": "fixture_chat_id_not_real",
+      "as": "bot"
+    }
+  ]
+}

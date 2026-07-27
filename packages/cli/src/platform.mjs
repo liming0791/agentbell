@@ -21,7 +21,8 @@ export function resolveTarget(platform = process.platform, architecture = proces
   return {
     ...target,
     id,
-    fileName: `agentbell-${id}${target.extension}`
+    fileName: `agentbell-${id}${target.extension}`,
+    bridgeFileName: `agentbell-bridge-${id}${target.extension}`
   };
 }
 

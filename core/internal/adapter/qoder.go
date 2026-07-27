@@ -96,10 +96,20 @@ func (adapter *QoderAdapter) Install(dryRun bool) (AdapterResult, error) {
 	if err != nil {
 		return result, err
 	}
+	receipt, receiptErr := adapter.readReceipt()
+	migrated := false
+	if receiptErr == nil &&
+		(receipt.Command != command || !equalStrings(receipt.Args, args)) {
+		migrated, err = removeQoderHooks(root, receipt.Command, receipt.Args)
+		if err != nil {
+			return result, err
+		}
+	}
 	changed, err := mergeQoderHooks(root, command, args)
 	if err != nil {
 		return result, err
 	}
+	changed = changed || migrated
 	result.Installed = true
 	result.Changed = changed
 	if dryRun {
@@ -124,7 +134,7 @@ func (adapter *QoderAdapter) Install(dryRun bool) (AdapterResult, error) {
 	if err := writeJSONObject(adapter.settingsPath(), root); err != nil {
 		return result, err
 	}
-	receipt := qoderReceipt{
+	receipt = qoderReceipt{
 		Version:      1,
 		Adapter:      qoderAdapterID,
 		SettingsPath: adapter.settingsPath(),

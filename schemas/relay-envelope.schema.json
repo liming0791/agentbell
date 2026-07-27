@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentbell.dev/schemas/relay-envelope.schema.json",
+  "title": "AgentBell RelayEnvelope",
+  "description": "Signed relay payload. Transports enforce a 65536-byte maximum on the exact JSON body.",
+  "type": "object",
+  "required": [
+    "protocolVersion",
+    "teamId",
+    "origin",
+    "delivery",
+    "sentAt",
+    "nonce",
+    "hop",
+    "event"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "const": "1"
+    },
+    "teamId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "origin": {
+      "type": "object",
+      "required": [
+        "id",
+        "runtime"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "runtime": {
+          "enum": [
+            "host",
+            "wsl",
+            "container",
+            "ssh",
+            "vendor-cloud"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "delivery": {
+      "type": "object",
+      "required": [
+        "key",
+        "producerKey"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "producerKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "sentAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "hop": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4
+    },
+    "event": {
+      "$ref": "./notification-event.schema.json"
+    }
+  },
+  "additionalProperties": false
+}

@@ -68,6 +68,69 @@ func TestNormalizeMappings(t *testing.T) {
 	}
 }
 
+func TestNormalizeM15ProductMappings(t *testing.T) {
+	now := time.Date(2026, 7, 26, 13, 0, 0, 0, time.UTC)
+	qoderWork, err := Normalize(
+		"qoder-work",
+		"desktop",
+		"host",
+		[]byte(`{"hook_event_name":"Stop","session_id":"qw-session"}`),
+		now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if qoderWork.Source != "qoder-work" ||
+		qoderWork.Event != EventTaskCompleted ||
+		qoderWork.Surface != "desktop" {
+		t.Fatalf("unexpected QoderWork notification: %#v", qoderWork)
+	}
+
+	tests := []struct {
+		name             string
+		notificationType string
+		event            string
+		status           string
+	}{
+		{"completed", "idle_prompt", EventTaskCompleted, StatusCompleted},
+		{"approval", "permission_prompt", EventApprovalRequired, StatusAttention},
+		{"unknown", "document_review", EventAgentInfo, StatusInfo},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := []byte(`{
+				"hook_event_name":"Notification",
+				"notification_type":"` + test.notificationType + `",
+				"session_id":"trae-session",
+				"tool_use_id":"tool-1"
+			}`)
+			notification, err := Normalize("trae", "ide", "host", raw, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if notification.Event != test.event ||
+				notification.Status != test.status ||
+				notification.Source != "trae" {
+				t.Fatalf("unexpected TRAE mapping: %#v", notification)
+			}
+		})
+	}
+
+	claude, err := Normalize(
+		"claude-code",
+		"desktop",
+		"host",
+		[]byte(`{"hook_event_name":"Notification","notification_type":"idle_prompt"}`),
+		now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claude.Event != EventAgentWaiting {
+		t.Fatalf("TRAE product semantics leaked into Claude: %#v", claude)
+	}
+}
+
 func TestCodexPermissionNotificationRequiresExplicitUserReviewer(t *testing.T) {
 	tests := []struct {
 		name string
@@ -376,5 +439,41 @@ func TestNotificationGoldenFixture(t *testing.T) {
 		notification.CWD != "" ||
 		notification.Summary != "" {
 		t.Fatalf("unexpected golden fixture: %#v", notification)
+	}
+}
+
+func TestKnownNotificationDimensions(t *testing.T) {
+	tests := []struct {
+		name    string
+		known   string
+		unknown string
+		check   func(string) bool
+	}{
+		{name: "source", known: "codex", unknown: "future", check: IsKnownSource},
+		{name: "surface", known: "desktop", unknown: "terminal", check: IsKnownSurface},
+		{name: "runtime", known: "wsl", unknown: "vm", check: IsKnownRuntime},
+		{name: "event", known: EventTaskCompleted, unknown: "task.future", check: IsKnownEvent},
+		{name: "status", known: StatusAttention, unknown: "pending", check: IsKnownStatus},
+		{name: "priority", known: "urgent", unknown: "critical", check: IsKnownPriority},
+		{name: "privacy", known: PrivacyMetadataOnly, unknown: "secret", check: IsKnownPrivacy},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if !test.check(test.known) {
+				t.Fatalf("%q should be known", test.known)
+			}
+			if test.check(test.unknown) {
+				t.Fatalf("%q should be unknown", test.unknown)
+			}
+		})
+	}
+
+	events := KnownEvents()
+	if len(events) != 7 || !IsKnownEvent(events[0]) {
+		t.Fatalf("known events are incomplete: %#v", events)
+	}
+	events[0] = "mutated"
+	if !IsKnownEvent(EventTaskCompleted) {
+		t.Fatal("KnownEvents exposed mutable authoritative state")
 	}
 }

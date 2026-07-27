@@ -1,25 +1,45 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
-  rm
+  readFile,
+  rm,
+  writeFile
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { findGo, root } from "./go-tool.mjs";
+import { resolveTarget } from "../packages/cli/src/platform.mjs";
 
 const samples = 35;
 const warmups = 5;
 const limitMilliseconds = 200;
+const coreVersion = JSON.parse(
+  await readFile(path.join(root, "package.json"), "utf8")
+).version;
 const temporaryRoot = await mkdtemp(
   path.join(os.tmpdir(), "agentbell-emit-benchmark-")
 );
 const stateDir = path.join(temporaryRoot, "Agent Bell 性能 🚀", "state");
+const dataRoot = path.join(temporaryRoot, "Agent Bell 性能 🚀", "data");
+const target = resolveTarget();
 const executable = path.join(
-  temporaryRoot,
+  dataRoot,
+  "bin",
+  coreVersion,
   process.platform === "win32" ? "agentbell.exe" : "agentbell"
+);
+const bridge = path.join(
+  dataRoot,
+  "bin",
+  "bridge",
+  "v1",
+  process.platform === "win32"
+    ? "agentbell-bridge.exe"
+    : "agentbell-bridge"
 );
 
 function run(command, args, options = {}) {
@@ -41,15 +61,52 @@ function run(command, args, options = {}) {
 
 try {
   await mkdir(stateDir, { recursive: true });
+  await mkdir(path.dirname(executable), { recursive: true });
+  await mkdir(path.dirname(bridge), { recursive: true });
   const goExecutable = await findGo();
   run(
     goExecutable,
-    ["build", "-trimpath", "-o", executable, "./cmd/agentbell"],
+    [
+      "build",
+      "-trimpath",
+      "-ldflags",
+      `-X github.com/liming0791/agentbell/core/internal/version.Version=${coreVersion}`,
+      "-o",
+      executable,
+      "./cmd/agentbell"
+    ],
     {
       cwd: path.join(root, "core"),
       env: { ...process.env, CGO_ENABLED: "0" },
       stdio: ["ignore", "ignore", "pipe"]
     }
+  );
+  run(
+    goExecutable,
+    ["build", "-trimpath", "-o", bridge, "./cmd/agentbell-bridge"],
+    {
+      cwd: path.join(root, "core"),
+      env: { ...process.env, CGO_ENABLED: "0" },
+      stdio: ["ignore", "ignore", "pipe"]
+    }
+  );
+  const coreChecksum = createHash("sha256")
+    .update(await readFile(executable))
+    .digest("hex");
+  const bridgeChecksum = createHash("sha256")
+    .update(await readFile(bridge))
+    .digest("hex");
+  await writeFile(
+    path.join(dataRoot, "bin", "active.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      generation: 1,
+      activeVersion: coreVersion,
+      target: target.id,
+      checksum: coreChecksum,
+      bridgeChecksum,
+      transactionId: "benchmark"
+    }, null, 2)}\n`
   );
 
   const durations = [];
@@ -62,16 +119,13 @@ try {
     });
     const started = performance.now();
     run(
-      executable,
+      bridge,
       [
-        "emit",
+        "hook-v1",
         "--adapter",
         "codex",
         "--surface",
-        "cli",
-        "--runtime",
-        "host",
-        "--stdin"
+        "cli"
       ],
       {
         input,
@@ -92,12 +146,13 @@ try {
   const p95 = durations[Math.ceil(durations.length * 0.95) - 1];
   const maximum = durations.at(-1);
   console.log(
-    `agentbell emit ${process.platform}/${process.arch}: ` +
+    `agentbell bridge hook ${process.platform}/${process.arch}: ` +
     `p95=${p95.toFixed(2)}ms max=${maximum.toFixed(2)}ms n=${durations.length}`
   );
   if (p95 >= limitMilliseconds) {
     throw new Error(
-      `emit p95 ${p95.toFixed(2)}ms exceeds the ${limitMilliseconds}ms gate.`
+      `bridge hook p95 ${p95.toFixed(2)}ms exceeds the ` +
+      `${limitMilliseconds}ms gate.`
     );
   }
 } finally {

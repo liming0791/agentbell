@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-07-25",
+  "updatedAt": "2026-07-26",
   "adapters": [
     {
       "id": "codex",
@@ -107,9 +107,28 @@
       ]
     },
     {
+      "id": "qoder-work",
+      "displayName": "QoderWork",
+      "phase1": true,
+      "supportLevel": "pilot",
+      "surfaces": [
+        "desktop"
+      ],
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "dialect": "qoderwork-json-hooks",
+      "events": [
+        "Stop",
+        "PostToolUseFailure",
+        "PermissionRequest"
+      ]
+    },
+    {
       "id": "zcode",
       "displayName": "ZCode",
-      "phase1": true,
+      "phase1": false,
       "supportLevel": "pilot",
       "surfaces": [
         "desktop"
@@ -125,7 +144,7 @@
     {
       "id": "workbuddy",
       "displayName": "Tencent WorkBuddy",
-      "phase1": true,
+      "phase1": false,
       "supportLevel": "pilot",
       "surfaces": [
         "desktop"
@@ -149,9 +168,9 @@
         "windows",
         "macos"
       ],
-      "dialect": "vendor-plugin-pilot",
+      "dialect": "trae-json-hooks",
       "events": [
-        "Stop"
+        "Notification"
       ]
     },
     {

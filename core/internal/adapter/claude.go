@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -16,21 +15,25 @@ const claudeAdapterID = "claude-code"
 var claudeHookEvents = []string{"Stop", "StopFailure", "Notification", "PermissionRequest"}
 
 type ClaudeAdapter struct {
-	Executable string
-	StateDir   string
-	ClaudeHome string
-	Now        func() time.Time
-	LookPath   func(string) (string, error)
+	Executable       string
+	BridgeExecutable string
+	ActiveGeneration uint64
+	StateDir         string
+	ClaudeHome       string
+	Now              func() time.Time
+	LookPath         func(string) (string, error)
 }
 
 type claudeReceipt struct {
-	Version      int       `json:"version"`
-	Adapter      string    `json:"adapter"`
-	SettingsPath string    `json:"settingsPath"`
-	Command      string    `json:"command"`
-	Args         []string  `json:"args"`
-	Backup       string    `json:"backup,omitempty"`
-	InstalledAt  time.Time `json:"installedAt"`
+	Version              int       `json:"version"`
+	Adapter              string    `json:"adapter"`
+	SettingsPath         string    `json:"settingsPath"`
+	Command              string    `json:"command"`
+	Args                 []string  `json:"args"`
+	Backup               string    `json:"backup,omitempty"`
+	InstalledAt          time.Time `json:"installedAt"`
+	BridgeProtocol       int       `json:"bridgeProtocol,omitempty"`
+	ActivationGeneration uint64    `json:"activationGeneration,omitempty"`
 }
 
 func NewClaudeAdapter(executable, stateDir string) (*ClaudeAdapter, error) {
@@ -75,7 +78,7 @@ func (adapter *ClaudeAdapter) Plan() AdapterPlan {
 		Adapter:    claudeAdapterID,
 		Detected:   adapter.Detect(),
 		HookPath:   adapter.settingsPath(),
-		Executable: adapter.Executable,
+		Executable: plannedHookExecutable(adapter.Executable, adapter.BridgeExecutable),
 		Changes: []string{
 			"merge AgentBell exec-form hooks into Stop, StopFailure, Notification and PermissionRequest",
 			"share the user-level settings hooks across Claude Code CLI and Desktop local sessions",
@@ -96,10 +99,21 @@ func (adapter *ClaudeAdapter) Install(dryRun bool) (AdapterResult, error) {
 	if err != nil {
 		return result, err
 	}
+	receipt, receiptErr := adapter.readReceipt()
+	migrated := false
+	if adapter.BridgeExecutable != "" &&
+		receiptErr == nil &&
+		(receipt.Command != command || !equalStrings(receipt.Args, args)) {
+		migrated, err = removeClaudeHooks(root, receipt.Command, receipt.Args)
+		if err != nil {
+			return result, err
+		}
+	}
 	changed, err := mergeClaudeHooks(root, command, args)
 	if err != nil {
 		return result, err
 	}
+	changed = changed || migrated
 	result.Installed = true
 	result.Changed = changed
 	if dryRun {
@@ -124,14 +138,20 @@ func (adapter *ClaudeAdapter) Install(dryRun bool) (AdapterResult, error) {
 	if err := writeJSONObject(adapter.settingsPath(), root); err != nil {
 		return result, err
 	}
-	receipt := claudeReceipt{
-		Version:      1,
-		Adapter:      claudeAdapterID,
-		SettingsPath: adapter.settingsPath(),
-		Command:      command,
-		Args:         args,
-		Backup:       backup,
-		InstalledAt:  adapter.now().UTC(),
+	invocation, err := adapter.hookInvocation()
+	if err != nil {
+		return result, err
+	}
+	receipt = claudeReceipt{
+		Version:              receiptVersion(invocation),
+		Adapter:              claudeAdapterID,
+		SettingsPath:         adapter.settingsPath(),
+		Command:              command,
+		Args:                 args,
+		Backup:               backup,
+		InstalledAt:          adapter.now().UTC(),
+		BridgeProtocol:       invocation.BridgeProtocol,
+		ActivationGeneration: invocation.ActivationGeneration,
 	}
 	if err := adapter.writeReceipt(receipt); err != nil {
 		return result, err
@@ -225,11 +245,27 @@ func (adapter *ClaudeAdapter) Diagnose() AdapterResult {
 		result.Message = err.Error()
 		return result
 	}
-	proof, verified := runtimeProofAfterConfig(
-		adapter.StateDir,
-		claudeAdapterID,
-		adapter.settingsPath(),
-	)
+	receipt, receiptErr := adapter.readReceipt()
+	var proof runtimeProof
+	var verified bool
+	if receiptErr == nil && bridgeReceiptActive(
+		receipt.Version,
+		receipt.BridgeProtocol,
+		receipt.ActivationGeneration,
+	) {
+		proof, verified = runtimeProofAfterConfigAndGeneration(
+			adapter.StateDir,
+			claudeAdapterID,
+			adapter.settingsPath(),
+			adapter.ActiveGeneration,
+		)
+	} else {
+		proof, verified = runtimeProofAfterConfig(
+			adapter.StateDir,
+			claudeAdapterID,
+			adapter.settingsPath(),
+		)
+	}
 	result.RuntimeVerified = verified
 	if !proof.LastSeen.IsZero() {
 		result.LastSeen = proof.LastSeen.Format(time.RFC3339Nano)
@@ -247,17 +283,22 @@ func (adapter *ClaudeAdapter) settingsPath() string {
 }
 
 func (adapter *ClaudeAdapter) command() (string, []string, error) {
-	if strings.ContainsAny(adapter.Executable, "\x00\n\r") {
-		return "", nil, errors.New("AgentBell executable path contains unsupported characters")
+	invocation, err := adapter.hookInvocation()
+	if err != nil {
+		return "", nil, err
 	}
-	return adapter.Executable, []string{
-		"emit",
-		"--adapter", claudeAdapterID,
-		"--surface", "cli",
-		"--runtime", "host",
-		"--stdin",
-		"--fail-open",
-	}, nil
+	return invocation.Executable, invocation.Args, nil
+}
+
+func (adapter *ClaudeAdapter) hookInvocation() (hookInvocation, error) {
+	return resolveHookInvocation(
+		adapter.Executable,
+		adapter.BridgeExecutable,
+		adapter.ActiveGeneration,
+		claudeAdapterID,
+		"cli",
+		"host",
+	)
 }
 
 func (adapter *ClaudeAdapter) backup(source string) (string, error) {
@@ -298,7 +339,12 @@ func (adapter *ClaudeAdapter) readReceipt() (claudeReceipt, error) {
 	if err := json.Unmarshal(value, &receipt); err != nil {
 		return claudeReceipt{}, err
 	}
-	if receipt.Version != 1 || receipt.Adapter != claudeAdapterID ||
+	if receipt.Adapter != claudeAdapterID ||
+		validateReceiptBridge(
+			receipt.Version,
+			receipt.BridgeProtocol,
+			receipt.ActivationGeneration,
+		) != nil ||
 		receipt.Command == "" || len(receipt.Args) == 0 {
 		return claudeReceipt{}, errors.New("invalid Claude Code adapter receipt")
 	}

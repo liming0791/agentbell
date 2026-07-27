@@ -26,6 +26,17 @@ const (
 	backendTask      = "windows-task-scheduler"
 )
 
+var ErrRestartUnsupported = errors.New(
+	"service backend does not support a safe verified restart",
+)
+
+type ServiceMode string
+
+const (
+	ServiceModeLegacy ServiceMode = "legacy"
+	ServiceModeBridge ServiceMode = "bridge"
+)
+
 type ManagerRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
 }
@@ -45,15 +56,17 @@ func (managerExecRunner) Run(ctx context.Context, name string, args ...string) (
 }
 
 type Manager struct {
-	GOOS        string
-	Executable  string
-	HomeDir     string
-	ConfigDir   string
-	LogDir      string
-	LarkCLIPath string
-	UID         string
-	Runner      ManagerRunner
-	LookPath    func(string) (string, error)
+	GOOS             string
+	Executable       string
+	BridgeExecutable string
+	ServiceMode      ServiceMode
+	HomeDir          string
+	ConfigDir        string
+	LogDir           string
+	LarkCLIPath      string
+	UID              string
+	Runner           ManagerRunner
+	LookPath         func(string) (string, error)
 }
 
 type ManagerResult struct {
@@ -95,6 +108,7 @@ func NewManager(larkCLIPath, logDir string) (*Manager, error) {
 	return &Manager{
 		GOOS:        runtime.GOOS,
 		Executable:  executable,
+		ServiceMode: ServiceModeLegacy,
 		HomeDir:     home,
 		ConfigDir:   configDir,
 		LogDir:      logDir,
@@ -154,6 +168,25 @@ func (manager *Manager) Uninstall(ctx context.Context, dryRun bool) (ManagerResu
 		return manager.uninstallLinux(ctx, dryRun)
 	case "windows":
 		return manager.uninstallWindowsTask(ctx, dryRun)
+	default:
+		return manager.emptyResult(), fmt.Errorf(
+			"service management is not implemented for %s",
+			manager.GOOS,
+		)
+	}
+}
+
+func (manager *Manager) Restart(ctx context.Context) (ManagerResult, error) {
+	if err := manager.validate(); err != nil {
+		return manager.emptyResult(), err
+	}
+	switch manager.GOOS {
+	case "darwin":
+		return manager.restartLaunchAgent(ctx)
+	case "linux":
+		return manager.restartLinux(ctx)
+	case "windows":
+		return manager.restartWindowsTask(ctx)
 	default:
 		return manager.emptyResult(), fmt.Errorf(
 			"service management is not implemented for %s",
@@ -575,7 +608,17 @@ func (manager *Manager) validate() error {
 	if manager.GOOS == "darwin" && manager.UID == "" {
 		return errors.New("LaunchAgent user id is incomplete")
 	}
-	for _, value := range []string{manager.Executable, manager.HomeDir, manager.LogDir} {
+	command, _, err := manager.serviceCommand()
+	if err != nil {
+		return err
+	}
+	if !absoluteFor(manager.GOOS, command) {
+		if manager.effectiveServiceMode() == ServiceModeBridge {
+			return errors.New("AgentBell bridge path must be absolute")
+		}
+		return errors.New("service manager paths must be absolute")
+	}
+	for _, value := range []string{manager.HomeDir, manager.LogDir} {
 		if !absoluteFor(manager.GOOS, value) {
 			return errors.New("service manager paths must be absolute")
 		}
@@ -586,10 +629,40 @@ func (manager *Manager) validate() error {
 	if manager.LarkCLIPath != "" && !absoluteFor(manager.GOOS, manager.LarkCLIPath) {
 		return errors.New("lark-cli path must be absolute")
 	}
-	if strings.ContainsAny(manager.Executable, "\x00\n\r\"") {
+	if strings.ContainsAny(command, "\x00\n\r\"") {
+		if manager.effectiveServiceMode() == ServiceModeBridge {
+			return errors.New("AgentBell bridge path contains unsupported characters")
+		}
 		return errors.New("AgentBell executable path contains unsupported characters")
 	}
 	return nil
+}
+
+func (manager *Manager) effectiveServiceMode() ServiceMode {
+	if manager.ServiceMode == "" {
+		return ServiceModeLegacy
+	}
+	return manager.ServiceMode
+}
+
+func (manager *Manager) serviceCommand() (string, []string, error) {
+	switch manager.effectiveServiceMode() {
+	case ServiceModeLegacy:
+		if manager.Executable == "" {
+			return "", nil, errors.New("AgentBell executable path is required")
+		}
+		return manager.Executable, []string{"service", "run", "--foreground"}, nil
+	case ServiceModeBridge:
+		if manager.BridgeExecutable == "" {
+			return "", nil, errors.New("AgentBell bridge path is required")
+		}
+		return manager.BridgeExecutable, []string{"service-v1"}, nil
+	default:
+		return "", nil, fmt.Errorf(
+			"unsupported AgentBell service mode %q",
+			manager.ServiceMode,
+		)
+	}
 }
 
 func (manager *Manager) emptyResult() ManagerResult {
@@ -675,6 +748,10 @@ func (manager *Manager) ensureDefinitionDirectories(result ManagerResult) error 
 
 func (manager *Manager) plist() ([]byte, error) {
 	result := manager.launchdResult()
+	command, arguments, err := manager.serviceCommand()
+	if err != nil {
+		return nil, err
+	}
 	pathValue := manager.pathValue([]string{
 		"/opt/homebrew/bin",
 		"/usr/local/bin",
@@ -689,23 +766,34 @@ func (manager *Manager) plist() ([]byte, error) {
 		`<plist version="1.0"><dict>`,
 		`<key>Label</key><string>` + xmlText(launchAgentLabel) + `</string>`,
 		`<key>ProgramArguments</key><array>`,
-		`<string>` + xmlText(manager.Executable) + `</string>`,
-		`<string>service</string><string>run</string><string>--foreground</string>`,
+		`<string>` + xmlText(command) + `</string>`,
+	}
+	for _, argument := range arguments {
+		values = append(values, `<string>`+xmlText(argument)+`</string>`)
+	}
+	values = append(values,
 		`</array>`,
-		`<key>EnvironmentVariables</key><dict><key>PATH</key><string>` + xmlText(pathValue) + `</string></dict>`,
+		`<key>EnvironmentVariables</key><dict>`,
+		`<key>HOME</key><string>`+xmlText(manager.HomeDir)+`</string>`,
+		`<key>PATH</key><string>`+xmlText(pathValue)+`</string>`,
+		`</dict>`,
 		`<key>RunAtLoad</key><true/>`,
 		`<key>KeepAlive</key><true/>`,
 		`<key>ProcessType</key><string>Background</string>`,
 		`<key>ThrottleInterval</key><integer>5</integer>`,
-		`<key>StandardOutPath</key><string>` + xmlText(result.StdoutPath) + `</string>`,
-		`<key>StandardErrorPath</key><string>` + xmlText(result.StderrPath) + `</string>`,
+		`<key>StandardOutPath</key><string>`+xmlText(result.StdoutPath)+`</string>`,
+		`<key>StandardErrorPath</key><string>`+xmlText(result.StderrPath)+`</string>`,
 		`</dict></plist>`,
-	}
+	)
 	return []byte(strings.Join(values, "\n") + "\n"), nil
 }
 
 func (manager *Manager) systemdUnit() ([]byte, error) {
 	result := manager.linuxResult(backendSystemd)
+	command, arguments, err := manager.serviceCommand()
+	if err != nil {
+		return nil, err
+	}
 	pathValue := manager.pathValue([]string{
 		filepath.Join(manager.HomeDir, ".local", "bin"),
 		"/usr/local/bin",
@@ -719,7 +807,7 @@ func (manager *Manager) systemdUnit() ([]byte, error) {
 		"",
 		"[Service]",
 		"Type=simple",
-		"ExecStart=" + systemdQuote(manager.Executable) + " service run --foreground",
+		"ExecStart=" + systemdCommand(command, arguments),
 		"Environment=" + systemdQuote("PATH="+pathValue),
 		"Restart=always",
 		"RestartSec=5",
@@ -733,13 +821,17 @@ func (manager *Manager) systemdUnit() ([]byte, error) {
 }
 
 func (manager *Manager) xdgDesktopEntry() ([]byte, error) {
+	command, arguments, err := manager.serviceCommand()
+	if err != nil {
+		return nil, err
+	}
 	values := []string{
 		"[Desktop Entry]",
 		"Type=Application",
 		"Version=1.0",
 		"Name=AgentBell",
 		"Comment=AgentBell notification delivery service",
-		"Exec=" + desktopExecArg(manager.Executable) + " service run --foreground",
+		"Exec=" + desktopCommand(command, arguments),
 		"Terminal=false",
 		"X-GNOME-Autostart-enabled=true",
 	}
@@ -747,10 +839,17 @@ func (manager *Manager) xdgDesktopEntry() ([]byte, error) {
 }
 
 func (manager *Manager) windowsTaskAction() (string, error) {
-	if strings.ContainsAny(manager.Executable, "\x00\n\r\"") {
+	command, arguments, err := manager.serviceCommand()
+	if err != nil {
+		return "", err
+	}
+	if strings.ContainsAny(command, "\x00\n\r\"") {
+		if manager.effectiveServiceMode() == ServiceModeBridge {
+			return "", errors.New("AgentBell bridge path contains unsupported characters")
+		}
 		return "", errors.New("AgentBell executable path contains unsupported characters")
 	}
-	return `"` + manager.Executable + `" service run --foreground`, nil
+	return `"` + command + `" ` + strings.Join(arguments, " "), nil
 }
 
 func (manager *Manager) pathValue(defaults []string) string {
@@ -804,6 +903,10 @@ func systemdQuote(value string) string {
 	return strconv.Quote(strings.ReplaceAll(value, "%", "%%"))
 }
 
+func systemdCommand(command string, arguments []string) string {
+	return systemdQuote(command) + " " + strings.Join(arguments, " ")
+}
+
 func desktopExecArg(value string) string {
 	replacer := strings.NewReplacer(
 		`\`, `\\`,
@@ -813,6 +916,10 @@ func desktopExecArg(value string) string {
 		"%", "%%",
 	)
 	return `"` + replacer.Replace(value) + `"`
+}
+
+func desktopCommand(command string, arguments []string) string {
+	return desktopExecArg(command) + " " + strings.Join(arguments, " ")
 }
 
 func xmlText(value string) string {

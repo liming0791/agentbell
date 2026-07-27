@@ -23,9 +23,8 @@
 | OpenCode | Desktop | 配置适用于 Desktop，插件可订阅 Session 事件 | 同上 | Windows/macOS/Linux | B | 与 CLI 共用 Go Adapter；实机验收跳过 |
 | Kimi Code | CLI | TOML Hook、`kimi.plugin.json` | `Stop`、`StopFailure`、`PermissionRequest` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 实机验收通过（2026-07-25），Windows/Linux 实机验收跳过；`Notification` 语义尚未完成验收，不声明支持 |
 | Qoder | CLI/IDE/JetBrains 插件 | 共享 `settings.json` Hook、插件 Hook | `Stop`、`PostToolUseFailure` | CLI 三平台；IDE/JB 以厂商平台为准 | B | Go Adapter 已实现（claude-json-hooks dialect）；Windows/Linux 实机验收跳过 |
-| ZCode | Desktop ADE | Beta 插件市场，官方列出 Hook 组件 | 待确认 | Windows/macOS；Linux beta | B | 做插件格式与 Stop 事件 spike |
-| Tencent WorkBuddy | Desktop | 官方插件市场列出 Hook 插件，可加第三方市场 | 待确认 | Windows/macOS | B | 向厂商确认 Hook schema，并实机验证 |
-| TRAE | IDE | v3.5.66 起官方更新日志声明支持 Hooks | 预计含 `Stop` | Windows/macOS；版本/账号分批开放 | B | 按版本和账号能力探测，不静态假设 |
+| QoderWork | Desktop | 独立 settings profile shell-command Hook；国际版 `~/.qoderwork/settings.json`，CN 版 `~/.qoderworkcn/settings.json` | `Stop`、`PostToolUseFailure`、`PermissionRequest` | Windows/macOS | B | M1.5 Go Adapter 已实现；QoderWork CN 0.9.12 / macOS 26.4 完成与后台发送黑盒通过（2026-07-26），失败和 Windows 矩阵待验 |
+| TRAE IDE | IDE | 独立 Hook profile shell-command Hook；国际版 `~/.trae/hooks.json`，CN 版 `~/.trae-cn/hooks.json` | `Notification.idle_prompt`、`Notification.permission_prompt` | Windows/macOS | B | M1.5 Go Adapter 已实现；TRAE CN 3.3.79 / macOS 26.4 单 Notification 完成与后台发送黑盒通过（2026-07-26），需启用全局 Hooks 并选择本地自动运行；授权和 Windows 矩阵待验 |
 | Kimi Work | Desktop Work mode | 官方 Plugin Center、Skill、定时任务 | 未公开生命周期 Hook | Windows/macOS | D / Waiting | 不进入一期适配器；等待公开、确定性的官方 Hook |
 
 ## 已确认的复用关系
@@ -35,6 +34,8 @@
 3. OpenCode 的配置适用于 TUI、CLI、Desktop 和 GitHub Action；插件可用 `session.idle` 识别一轮完成。
 4. Qoder IDE/JetBrains 插件与 CLI 共享 Hook 配置，格式与 Claude Code 高度兼容。
 5. Kimi Code 使用自己的 TOML/插件 Hook 格式，需要单独 dialect。
+6. QoderWork 与 Qoder 只共享结构化 JSON 合并基础设施；QoderWork 是 shell-command
+   dialect，Qoder 是 exec-form dialect，配置根、检测、重启和卸载所有权也全部隔离。
 
 ## 实际交付状态
 
@@ -48,8 +49,11 @@ CLI/Desktop 配置复用实现；Kimi Code 已完成 Go Adapter 实现与 macOS 
 （2026-07-25）。OpenCode 已完成全局插件 Go Adapter 实现（`opencode-plugin-events`
 dialect，事件 `session.idle`/`session.error`/`permission.asked`），CLI/TUI/Desktop
 共享同一插件文件；Qoder 已完成用户级 settings Go Adapter 实现（`claude-json-hooks`
-dialect，事件 `Stop`/`PostToolUseFailure`），CLI/IDE/JetBrains 共享配置。两者均
-保持 Pilot，产品实机矩阵待验。公开文档证明产品存在确定性 Hook，不等于 AgentBell
+dialect，事件 `Stop`/`PostToolUseFailure`），CLI/IDE/JetBrains 共享配置。
+QoderWork 与 TRAE 已完成 M1.5 独立 Go Adapter、交互 setup、统一卸载、runtime proof
+诊断和自动 fixture，并完成 macOS CN 版本的完成事件与后台发送黑盒验收；仍保持 Pilot，
+失败/授权分支和 Windows 产品实机矩阵待验。公开文档证明
+产品存在确定性 Hook，不等于 AgentBell
 已完成真实产品矩阵，因此不能据此标成 Verified。
 
 ## 公开证据
@@ -59,9 +63,10 @@ dialect，事件 `Stop`/`PostToolUseFailure`），CLI/IDE/JetBrains 共享配置
 - OpenCode：[Plugins 与 `session.idle`](https://opencode.ai/docs/plugins/)、[跨 Surface 配置](https://opencode.ai/docs/config/)
 - Kimi Code：[Hooks](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html)、[Plugins](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/plugins.html)
 - Qoder：[IDE/CLI Hooks](https://docs.qoder.com/extensions/hooks)
+- QoderWork：[Hooks](https://docs.qoder.com/qoderwork/hooks)
 - ZCode：[Beta 插件系统](https://zcode.z.ai/cn/docs/plugin)
 - WorkBuddy：[插件系统](https://www.codebuddy.cn/docs/workbuddy/Plugins)
-- TRAE：[Hooks 上线记录](https://www.trae.ai/changelog)
+- TRAE IDE：[Hook 配置参考](https://docs.trae.ai/ide/hook-configuration-reference)
 - Kimi Work：[Plugin Center](https://www.kimi.com/help/kimi-work/plugin-center)
 
 ## 首期交付分组
@@ -78,8 +83,7 @@ dialect，事件 `Stop`/`PostToolUseFailure`），CLI/IDE/JetBrains 共享配置
 
 ### Phase 1 Beta
 
-- ZCode
-- Tencent WorkBuddy
+- QoderWork
 - TRAE IDE
 
 上述产品都会出现在第一期产品中，但安装器会显示 Verified 或 Pilot，不会用一个模糊的“已支持”掩盖可靠性差异。后续出现只能软触发但仍有明确用户价值的产品时，可以使用 Assisted 等级。
@@ -87,6 +91,7 @@ dialect，事件 `Stop`/`PostToolUseFailure`），CLI/IDE/JetBrains 共享配置
 ### Waiting / Roadmap
 
 - Kimi Work：记录在产品目录和 [TODO.md](../TODO.md) 中，但 `phase1=false`，不会生成或安装适配器。只有官方公开确定性生命周期 Hook 并满足适配器验收门槛后才进入 Pilot。
+- ZCode、WorkBuddy：保留公开证据和产品目录记录，但 `phase1=false`，不进入 M1.5。
 
 ## 后续优先候选
 
@@ -102,13 +107,14 @@ dialect，事件 `Stop`/`PostToolUseFailure`），CLI/IDE/JetBrains 共享配置
 
 ## 当前未解决问题
 
-1. ZCode 官方文档说明插件包含 Hook，但未公开完整 Hook schema 和事件清单。
-2. WorkBuddy 公开文档说明支持 Hook 插件和第三方市场，但缺少可直接实现的生命周期技术参考。
-3. TRAE 从 v3.5.66 起声明支持 Hooks，版本、地区、个人/企业账号的可见性可能不同。
+1. ZCode 官方文档说明插件包含 Hook，但未公开完整 Hook schema 和事件清单，且不进入 M1.5。
+2. WorkBuddy 公开文档说明支持 Hook 插件和第三方市场，但缺少可直接实现的生命周期技术参考，且不进入 M1.5。
+3. QoderWork 与 Qoder 的 Hook group 结构相近，但命令字段形态和配置 profile 均不能合并。
 4. Kimi Work Plugin Center 没有公开第三方生命周期 Hook；项目已明确延期，不用 Skill/MCP 软触发替代。
-5. Claude/Codex Desktop 的远程或云会话不能自动视为本机 Hook；需按任务实际执行位置判断。
-6. Codex `PermissionRequest` 当前不暴露有效审批人；AgentBell 不发送该事件，避免把
+5. 五个现有 Adapter 的 IDE Surface 只加入待测试矩阵，不自动生成开发任务。
+6. Claude/Codex Desktop 的远程或云会话不能自动视为本机 Hook；需按任务实际执行位置判断。
+7. Codex `PermissionRequest` 当前不暴露有效审批人；AgentBell 不发送该事件，避免把
    原生 `auto_review` 误报成人工待审批。恢复条件见 [TODO](../TODO.md)。
-7. Codex 没有公开的已有任务 Hook 重载接口；CLI `/hooks` 只适合审核当前已发现的
+8. Codex 没有公开的已有任务 Hook 重载接口；CLI `/hooks` 只适合审核当前已发现的
    Hook，公开文档没有为 Desktop/IDE 提供等价的重载接口。首次安装后的可靠激活仍需
    分叉或新建任务，恢复条件见 [TODO](../TODO.md)。

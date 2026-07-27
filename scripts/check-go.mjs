@@ -39,6 +39,31 @@ if (formatOutput) {
 }
 
 run(goExecutable, ["vet", "./..."]);
+
+// A fixed mutation count keeps the CI smoke reproducible across fast and slow
+// runners. Developers can opt into longer duration-based runs explicitly.
+const fuzzTime = process.env.AGENTBELL_FUZZ_TIME || "100x";
+if (!/^(?:[1-9][0-9]*(?:ms|s|x))$/.test(fuzzTime)) {
+  throw new Error(`Invalid AGENTBELL_FUZZ_TIME: ${fuzzTime}`);
+}
+for (const [packageName, target] of [
+  ["config", "FuzzConfigStrictDecode"],
+  ["settings", "FuzzSettingsSidecarStrictDecode"],
+  ["remoteconfig", "FuzzRemoteSidecarStrictDecode"],
+  ["policy", "FuzzTemplateRender"],
+  ["relay", "FuzzRelayEnvelopeDecode"],
+  ["adapter", "FuzzHookConflictParsers"]
+]) {
+  run(goExecutable, [
+    "test",
+    `./internal/${packageName}`,
+    "-run=^$",
+    `-fuzz=^${target}$`,
+    `-fuzztime=${fuzzTime}`,
+    "-parallel=1"
+  ]);
+}
+
 run(goExecutable, ["test", "./...", "-coverprofile=coverage.out", "-covermode=atomic"]);
 const coverageOutput = run(
   goExecutable,
@@ -59,7 +84,23 @@ if (coverage < 75) {
   throw new Error(`Go coverage ${coverage}% is below the 75% gate.`);
 }
 
-for (const packageName of ["event", "queue", "adapter", "setup"]) {
+for (const packageName of [
+  "event",
+  "queue",
+  "adapter",
+  "setup",
+  "binding",
+  "settings",
+  "relay",
+  "bridge",
+  "installstate",
+  "policy",
+  "hookaudit",
+  "pluginverify",
+  "remoteconfig",
+  "remote",
+  "secretstore"
+]) {
   const packageOutput = run(
     goExecutable,
     ["test", `./internal/${packageName}`, "-cover"],

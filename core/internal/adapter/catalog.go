@@ -55,8 +55,10 @@ func (catalog Catalog) Validate() error {
 	allowedDialects := map[string]bool{
 		"codex-json-hooks":       true,
 		"claude-json-hooks":      true,
+		"qoderwork-json-hooks":   true,
 		"kimi-plugin-hooks":      true,
 		"opencode-plugin-events": true,
+		"trae-json-hooks":        true,
 		"vendor-plugin-pilot":    true,
 		"assisted-mcp-skill":     true,
 	}

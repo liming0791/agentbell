@@ -20,9 +20,12 @@ concurrency:
 
 jobs:
   build-core:
-    name: Build native Core
+    name: Build native Core, bridge and signed plugins
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       SIGNATURE_STATUS: ${{ vars.AGENTBELL_SIGNATURE_STATUS || 'technical-preview' }}
@@ -35,6 +38,16 @@ jobs:
 
       - name: Resolve the checked-out release commit
         run: echo "RELEASE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Require the release workflow itself to run from the release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]; then
+            echo "Release signing identity must be refs/tags/$RELEASE_TAG; got $GITHUB_REF."
+            echo "For workflow_dispatch, select the existing tag as the workflow ref."
+            exit 1
+          fi
 
       - name: Use Node.js 24
         uses: actions/setup-node@v6
@@ -51,6 +64,11 @@ jobs:
       - name: Install Node.js dependencies
         run: npm ci
 
+      - name: Install Cosign for keyless plugin signing
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: v3.0.6
+
       - name: Enforce the M0.5 signing gate
         run: |
           if [ "$SIGNATURE_STATUS" != "technical-preview" ]; then
@@ -64,7 +82,7 @@ jobs:
           npm run ci
           npm run release:verify -- "$RELEASE_TAG"
 
-      - name: Build six native binaries
+      - name: Build six Core and six bridge binaries
         run: |
           version="${RELEASE_TAG#v}"
           source_date_epoch="$(git show -s --format=%ct "$RELEASE_COMMIT")"
@@ -73,6 +91,57 @@ jobs:
             --version "$version" \
             --commit "$RELEASE_COMMIT" \
             --build-time "$build_time"
+
+      - name: Smoke-test final Linux Core over TLS and HTTPS
+        env:
+          AGENTBELL_HTTPS_SMOKE_BINARY: ${{ github.workspace }}/artifacts/core/agentbell-linux-amd64
+        run: |
+          chmod +x "$AGENTBELL_HTTPS_SMOKE_BINARY"
+          npm run smoke:https
+
+      - name: Stage and keylessly sign five plugin bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          node scripts/plugin-bundles.mjs \
+            --output artifacts/plugins \
+            --version "$version" \
+            --min-core-version "$version" \
+            --max-core-version "$version" \
+            --signature-status sigstore-verified
+
+          for manifest in artifacts/plugins/*/plugin-manifest.json; do
+            bundle_dir="${manifest%/plugin-manifest.json}"
+            cosign sign-blob --yes \
+              --bundle "$bundle_dir/plugin.sigstore.json" \
+              "$manifest"
+          done
+
+      - name: Verify signed plugin staging with the final host Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_core="artifacts/core/agentbell-linux-amd64"
+          chmod +x "$host_core"
+          for bundle_dir in artifacts/plugins/*; do
+            "$host_core" plugin verify "$bundle_dir" --json
+          done
+
+      - name: Create deterministic plugin archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git show -s --format=%ct "$RELEASE_COMMIT")"
+          for bundle_dir in artifacts/plugins/*; do
+            bundle_name="${bundle_dir##*/}"
+            tar --sort=name \
+              --mtime="@$source_date_epoch" \
+              --owner=0 --group=0 --numeric-owner \
+              -C artifacts/plugins \
+              -cf - "$bundle_name" |
+              gzip -n -9 > "artifacts/plugins/$bundle_name.tar.gz"
+          done
 
       - name: Create platform archives
         working-directory: artifacts/core
@@ -102,6 +171,34 @@ jobs:
             --commit "$RELEASE_COMMIT" \
             --signature-status "$SIGNATURE_STATUS"
 
+      - name: Download the previous Release Core for migration smoke
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          previous_tag="${{ vars.AGENTBELL_M2_SMOKE_FROM_TAG || 'v0.2.0-rc.3' }}"
+          if [ "$previous_tag" = "$RELEASE_TAG" ]; then
+            echo "M2 migration smoke requires a different previous Release."
+            exit 1
+          fi
+          mkdir -p artifacts/previous
+          gh release download "$previous_tag" \
+            --pattern 'agentbell-linux-amd64' \
+            --dir artifacts/previous
+          echo "M2_PREVIOUS_TAG=$previous_tag" >> "$GITHUB_ENV"
+
+      - name: Smoke-test upgrade, stable Hooks, rollback and uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          node scripts/release-lifecycle-smoke.mjs \
+            --directory artifacts/core \
+            --version "$version" \
+            --previous-core artifacts/previous/agentbell-linux-amd64 \
+            --previous-version "${M2_PREVIOUS_TAG#v}"
+
       - name: Smoke-test host binary and npm bootstrap
         run: |
           chmod +x artifacts/core/agentbell-linux-amd64
@@ -110,15 +207,22 @@ jobs:
             --directory artifacts/core \
             --version "$version"
 
-      - name: Upload Core artifacts
+      - name: Upload Core and bridge artifacts
         uses: actions/upload-artifact@v7
         with:
           name: agentbell-core
           path: artifacts/core/
           if-no-files-found: error
 
+      - name: Upload signed plugin artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: agentbell-plugins
+          path: artifacts/plugins/*.tar.gz
+          if-no-files-found: error
+
   publish:
-    name: Publish Core, npm packages and GitHub release
+    name: Publish Core, bridge, npm packages and GitHub release
     needs: build-core
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -138,17 +242,29 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - name: Download Core artifacts
+      - name: Download Core and bridge artifacts
         uses: actions/download-artifact@v8
         with:
           name: agentbell-core
           path: artifacts/core
 
-      - name: Attest Core artifacts
+      - name: Download signed plugin artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: agentbell-plugins
+          path: artifacts/plugins
+
+      - name: Attest Core and bridge artifacts
         if: vars.AGENTBELL_ATTESTATIONS_ENABLED == 'true'
         uses: actions/attest@v4
         with:
           subject-path: artifacts/core/*
+
+      - name: Attest signed plugin artifacts
+        if: vars.AGENTBELL_ATTESTATIONS_ENABLED == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/plugins/*
 
       - name: Record unavailable GitHub artifact attestations
         if: vars.AGENTBELL_ATTESTATIONS_ENABLED != 'true'
@@ -156,7 +272,7 @@ jobs:
           echo "GitHub artifact attestations are disabled for this repository."
           echo "The release remains verifiable through checksums.txt, release-manifest.json and the retained Actions artifact."
 
-      - name: Stage Core artifacts in a draft GitHub release
+      - name: Stage Core, bridge and signed plugins in a draft GitHub release
         shell: bash
         run: |
           set -euo pipefail
@@ -166,9 +282,9 @@ jobs:
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" artifacts/core/* --clobber
+            gh release upload "$RELEASE_TAG" artifacts/core/* artifacts/plugins/* --clobber
           else
-            gh release create "$RELEASE_TAG" artifacts/core/* \
+            gh release create "$RELEASE_TAG" artifacts/core/* artifacts/plugins/* \
               --draft \
               --generate-notes \
               --verify-tag \
@@ -188,6 +304,42 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Smoke-test the staged GitHub release
+        shell: bash
+        env:
+          AGENTBELL_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          data_root="${RUNNER_TEMP}/agentbell-release-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$data_root" in
+            "${RUNNER_TEMP}/agentbell-release-smoke-"*) ;;
+            *) echo "Unsafe release smoke path: $data_root"; exit 1 ;;
+          esac
+          rm -rf -- "$data_root"
+          mkdir -p "$data_root"
+          trap 'rm -rf -- "$data_root"' EXIT
+          export AGENTBELL_DATA_DIR="$data_root"
+
+          node packages/cli/bin/agentbell.mjs install-core --version "$version"
+          installed_core="$(
+            node packages/cli/bin/agentbell.mjs core-path --version "$version"
+          )"
+          "$installed_core" version --json
+          node packages/cli/bin/agentbell.mjs bridge doctor --json
+
+          mkdir -p "$data_root/plugin-downloads"
+          gh release download "$RELEASE_TAG" \
+            --pattern 'agentbell-plugin-*.tar.gz' \
+            --dir "$data_root/plugin-downloads"
+          for archive in "$data_root"/plugin-downloads/*.tar.gz; do
+            archive_name="${archive##*/}"
+            plugin_root="$data_root/plugin-${archive_name%.tar.gz}"
+            mkdir -p "$plugin_root"
+            tar -xzf "$archive" -C "$plugin_root" --strip-components=1
+            "$installed_core" plugin verify "$plugin_root" --json
+          done
 
       - name: Build npm package archives
         run: |
@@ -229,29 +381,6 @@ jobs:
 
       - name: Publish the completed GitHub release
         run: gh release edit "$RELEASE_TAG" --draft=false
-
-      - name: Smoke-test the published private GitHub release
-        shell: bash
-        env:
-          AGENTBELL_GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          data_root="${RUNNER_TEMP}/agentbell-release-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          case "$data_root" in
-            "${RUNNER_TEMP}/agentbell-release-smoke-"*) ;;
-            *) echo "Unsafe release smoke path: $data_root"; exit 1 ;;
-          esac
-          rm -rf -- "$data_root"
-          mkdir -p "$data_root"
-          trap 'rm -rf -- "$data_root"' EXIT
-          export AGENTBELL_DATA_DIR="$data_root"
-
-          node packages/cli/bin/agentbell.mjs install-core --version "$version"
-          installed_core="$(
-            node packages/cli/bin/agentbell.mjs core-path --version "$version"
-          )"
-          "$installed_core" version --json
 
       - name: Return an incomplete release to draft
         if: failure() && !cancelled()

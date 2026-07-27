@@ -66,6 +66,7 @@ func TestManagerInstallWritesAndLoadsLaunchAgent(t *testing.T) {
 	for _, expected := range []string{
 		"com.agentbell.service",
 		"AgentBell &amp; Core",
+		"<key>HOME</key><string>" + manager.HomeDir + "</string>",
 		"node &amp; tools",
 		"service.stdout.log",
 		"service.stderr.log",

@@ -19,6 +19,7 @@ Node.js workspace 保留为 npm bootstrap 和迁移期协议原型，不承担�
 
 ## 后果
 
-- M1 前必须冻结公开模块路径；当前 Go 包全部放在 `internal/`，不承诺第三方导入路径；
+- 公开模块路径已冻结为 `github.com/liming0791/agentbell/core`；当前 Go 包全部放在
+  `internal/`，不承诺第三方导入路径；
 - Go 与 Node fixture 必须共同验证 NotificationEvent；
 - Release 必须先产生并验证 Core，再发布 npm bootstrap。

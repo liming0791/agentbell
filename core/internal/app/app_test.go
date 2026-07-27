@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/liming0791/agentbell/core/internal/config"
 	"github.com/liming0791/agentbell/core/internal/service"
@@ -86,6 +88,67 @@ func TestEmitAndDeduplicate(t *testing.T) {
 	}
 }
 
+func TestEmitRecordsBridgeActivationProof(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("AGENTBELL_STATE_DIR", stateDir)
+	var stderr bytes.Buffer
+	code := Run(
+		[]string{
+			"emit",
+			"--adapter", "codex",
+			"--surface", "desktop",
+			"--runtime", "host",
+			"--stdin",
+			"--fail-open",
+			"--bridge-protocol", "1",
+			"--activation-generation", "9",
+		},
+		strings.NewReader(`{"hook_event_name":"Stop","session_id":"bridge","turn_id":"1"}`),
+		&bytes.Buffer{},
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("bridge emit failed: code=%d stderr=%s", code, stderr.String())
+	}
+	proofPath := filepath.Join(stateDir, "adapters", "codex", "runtime-proof.json")
+	proof, err := os.ReadFile(proofPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(proof, &value); err != nil {
+		t.Fatal(err)
+	}
+	if value["version"] != float64(3) ||
+		value["bridgeProtocol"] != float64(1) ||
+		value["activationGeneration"] != float64(9) ||
+		value["coreVersion"] == "" {
+		t.Fatalf("incomplete bridge proof: %s", proof)
+	}
+}
+
+func TestEmitRejectsIncompleteBridgeParameters(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("AGENTBELL_STATE_DIR", stateDir)
+	var stderr bytes.Buffer
+	code := Run(
+		[]string{
+			"emit",
+			"--adapter", "codex",
+			"--surface", "cli",
+			"--runtime", "host",
+			"--stdin",
+			"--bridge-protocol", "1",
+		},
+		strings.NewReader(`{"hook_event_name":"Stop"}`),
+		&bytes.Buffer{},
+		&stderr,
+	)
+	if code == 0 || !strings.Contains(stderr.String(), "activation generation") {
+		t.Fatalf("incomplete bridge parameters were accepted: code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func TestEmitSuppressesAmbiguousCodexApproval(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("AGENTBELL_STATE_DIR", stateDir)
@@ -122,7 +185,7 @@ func TestEmitInputLimitsAndFailOpen(t *testing.T) {
 	var stderr bytes.Buffer
 	code := Run(
 		[]string{"emit", "--adapter", "codex", "--surface", "cli", "--runtime", "host", "--stdin"},
-		strings.NewReader(strings.Repeat("x", maxInputSize+1)),
+		strings.NewReader(`"`+strings.Repeat("x", maxInputSize)+`"`),
 		&bytes.Buffer{},
 		&stderr,
 	)
@@ -156,10 +219,41 @@ func TestReadLimitedBoundaries(t *testing.T) {
 		t.Fatalf("unicode input: %q err=%v", value, err)
 	}
 	if _, err := readLimited(
-		strings.NewReader(strings.Repeat("x", maxInputSize)),
+		strings.NewReader(`"`+strings.Repeat("x", maxInputSize-2)+`"`),
 		maxInputSize,
 	); err != nil {
 		t.Fatalf("exact-size input was rejected: %v", err)
+	}
+}
+
+func TestReadLimitedDoesNotWaitForHookStdinEOF(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	payload := `{"hook_event_name":"Stop","session_id":"qoder-work"}`
+
+	result := make(chan struct {
+		value []byte
+		err   error
+	}, 1)
+	go func() {
+		value, err := readLimited(reader, maxInputSize)
+		result <- struct {
+			value []byte
+			err   error
+		}{value: value, err: err}
+	}()
+	if _, err := io.WriteString(writer, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case received := <-result:
+		if received.err != nil || string(received.value) != payload {
+			t.Fatalf("unexpected non-EOF read: %q err=%v", received.value, received.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("readLimited waited for EOF after receiving a complete Hook JSON value")
 	}
 }
 
@@ -178,7 +272,9 @@ func TestHelpDoctorQueueAndUnsupported(t *testing.T) {
 	if code := Run([]string{"doctor", "--json"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("doctor failed: %d %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"queue"`) {
+	if !strings.Contains(stdout.String(), `"queue"`) ||
+		!strings.Contains(stdout.String(), `"qoder-work"`) ||
+		!strings.Contains(stdout.String(), `"trae"`) {
 		t.Fatalf("doctor output is incomplete: %s", stdout.String())
 	}
 	stdout.Reset()
@@ -296,8 +392,25 @@ func TestTestCommandSendsMessage(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result["ok"] != true || result["channel"] != "feishu" || result["chatId"] != "oc_test" {
+	if result["ok"] != true || result["channel"] != "feishu" {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+	if _, exposed := result["chatId"]; exposed || strings.Contains(stdout.String(), "oc_test") {
+		t.Fatalf("test JSON must not expose the destination chat id: %s", stdout.String())
+	}
+}
+
+func TestTestCommandTextDoesNotExposeChatID(t *testing.T) {
+	writeTestConfig(t, writeFakeLarkCLI(t, true))
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"test"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("test command failed: %d %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "频道 feishu") ||
+		strings.Contains(stdout.String(), "oc_test") {
+		t.Fatalf("test text must identify only the AgentBell channel: %q", stdout.String())
 	}
 }
 
@@ -423,6 +536,12 @@ func TestServiceInstallMigratesAbsoluteLarkPathOnMacOS(t *testing.T) {
 	if !strings.Contains(string(plist), larkDir) {
 		t.Fatalf("LaunchAgent PATH does not include lark-cli runtime: %s", plist)
 	}
+	if !strings.Contains(
+		string(plist),
+		"<key>HOME</key><string>"+home+"</string>",
+	) {
+		t.Fatalf("LaunchAgent HOME does not match the installing user: %s", plist)
+	}
 }
 
 func TestAdapterCommands(t *testing.T) {
@@ -531,14 +650,21 @@ func TestAdapterQoderCommands(t *testing.T) {
 
 func TestAdapterClaudeCommandsAndUnifiedUninstall(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("HOME", root)
 	t.Setenv("AGENTBELL_STATE_DIR", filepath.Join(root, "state"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
 	t.Setenv("KIMI_CODE_HOME", filepath.Join(root, ".kimi-code"))
 	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(root, ".config", "opencode"))
 	t.Setenv("QODER_CONFIG_DIR", filepath.Join(root, ".qoder"))
+	t.Setenv("QODERWORK_CONFIG_DIR", filepath.Join(root, ".qoderwork"))
+	t.Setenv("TRAE_CONFIG_DIR", filepath.Join(root, ".trae"))
 
-	for _, id := range []string{"codex", "claude-code", "kimi-code", "opencode", "qoder"} {
+	installedIDs := []string{"codex", "claude-code", "kimi-code", "opencode", "qoder"}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		installedIDs = append(installedIDs, "qoder-work", "trae")
+	}
+	for _, id := range installedIDs {
 		for _, arguments := range [][]string{
 			{"adapter", "plan", id},
 			{"adapter", "install", id},
@@ -567,7 +693,7 @@ func TestAdapterClaudeCommandsAndUnifiedUninstall(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 5 {
+	if len(results) != len(supportedAdapterIDs) {
 		t.Fatalf("unexpected uninstall results: %#v", results)
 	}
 	for _, path := range []string{
@@ -575,8 +701,16 @@ func TestAdapterClaudeCommandsAndUnifiedUninstall(t *testing.T) {
 		filepath.Join(root, ".claude", "settings.json"),
 		filepath.Join(root, ".kimi-code", "config.toml"),
 		filepath.Join(root, ".qoder", "settings.json"),
+		filepath.Join(root, ".qoderwork", "settings.json"),
+		filepath.Join(root, ".trae", "hooks.json"),
 	} {
 		raw, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) &&
+			(path == filepath.Join(root, ".qoderwork", "settings.json") ||
+				path == filepath.Join(root, ".trae", "hooks.json")) &&
+			runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -591,6 +725,7 @@ func TestAdapterClaudeCommandsAndUnifiedUninstall(t *testing.T) {
 
 func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("HOME", root)
 	t.Setenv("AGENTBELL_CONFIG", filepath.Join(root, "config.json"))
 	t.Setenv("AGENTBELL_STATE_DIR", filepath.Join(root, "state"))
 	t.Setenv("AGENTBELL_LOG_DIR", filepath.Join(root, "logs"))
@@ -599,11 +734,17 @@ func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
 	t.Setenv("KIMI_CODE_HOME", filepath.Join(root, ".kimi-code"))
 	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(root, ".config", "opencode"))
 	t.Setenv("QODER_CONFIG_DIR", filepath.Join(root, ".qoder"))
+	t.Setenv("QODERWORK_CONFIG_DIR", filepath.Join(root, ".qoderwork"))
+	t.Setenv("TRAE_CONFIG_DIR", filepath.Join(root, ".trae"))
 	if err := os.WriteFile(os.Getenv("AGENTBELL_CONFIG"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	for _, id := range supportedAdapterIDs {
+		if (id == "qoder-work" || id == "trae") &&
+			runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+			continue
+		}
 		var stderr bytes.Buffer
 		if code := Run(
 			[]string{"adapter", "install", id},
@@ -683,8 +824,16 @@ func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
 		filepath.Join(root, ".claude", "settings.json"),
 		filepath.Join(root, ".kimi-code", "config.toml"),
 		filepath.Join(root, ".qoder", "settings.json"),
+		filepath.Join(root, ".qoderwork", "settings.json"),
+		filepath.Join(root, ".trae", "hooks.json"),
 	} {
 		raw, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) &&
+			(path == filepath.Join(root, ".qoderwork", "settings.json") ||
+				path == filepath.Join(root, ".trae", "hooks.json")) &&
+			runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}

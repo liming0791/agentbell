@@ -165,8 +165,12 @@ func TestQoderDiagnoseWithRuntimeProof(t *testing.T) {
 	if _, err := adapterValue.Install(false); err != nil {
 		t.Fatal(err)
 	}
-	now := adapterValue.Now()
-	if err := RecordRuntimeProof(adapterValue.StateDir, qoderAdapterID, "task.completed", now); err != nil {
+	info, err := os.Stat(adapterValue.settingsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenAt := info.ModTime().Add(time.Second)
+	if err := RecordRuntimeProof(adapterValue.StateDir, qoderAdapterID, "task.completed", seenAt); err != nil {
 		t.Fatal(err)
 	}
 	diagnosis := adapterValue.Diagnose()

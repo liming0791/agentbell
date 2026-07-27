@@ -158,6 +158,15 @@ func newFixture(t *testing.T) (*Setup, *fakeRunner, *fakePrompter, *fakeHookAdap
 		ConfigFile: filepath.Join(root, "config", "config.json"),
 		StateDir:   filepath.Join(root, "state"),
 		Out:        &bytes.Buffer{},
+		Stat: func(path string) (os.FileInfo, error) {
+			if strings.HasPrefix(
+				path,
+				filepath.Join(string(filepath.Separator), "Applications")+string(filepath.Separator),
+			) {
+				return nil, os.ErrNotExist
+			}
+			return os.Stat(path)
+		},
 		NewCodexAdapter: func() (hookAdapter, error) {
 			return codex, nil
 		},
@@ -211,6 +220,55 @@ func TestSetupHappyPathSearchChat(t *testing.T) {
 	}
 }
 
+func TestSetupDefaultAdaptersUseSelectedRuntime(t *testing.T) {
+	root := t.TempDir()
+	coreExecutable := filepath.Join(root, "bin", "0.3.0", "agentbell")
+	bridgeExecutable := filepath.Join(
+		root,
+		"bin",
+		"bridge",
+		"v1",
+		"agentbell-bridge",
+	)
+	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
+	t.Setenv("KIMI_CODE_HOME", filepath.Join(root, ".kimi-code"))
+	setup := &Setup{
+		HomeDir:          root,
+		StateDir:         filepath.Join(root, "state"),
+		CoreExecutable:   coreExecutable,
+		BridgeExecutable: bridgeExecutable,
+		ActiveGeneration: 23,
+	}
+	if err := setup.resolve(); err != nil {
+		t.Fatal(err)
+	}
+
+	codexValue, err := setup.NewCodexAdapter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	codex := codexValue.(*adapter.CodexAdapter)
+	if codex.Executable != coreExecutable ||
+		codex.BridgeExecutable != bridgeExecutable ||
+		codex.ActiveGeneration != 23 {
+		t.Fatalf(
+			"codex runtime = (%q, %q, %d)",
+			codex.Executable,
+			codex.BridgeExecutable,
+			codex.ActiveGeneration,
+		)
+	}
+
+	openCodeValue, err := setup.NewOpenCodeAdapter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if openCodeValue.(*adapter.OpenCodeAdapter).Executable != coreExecutable {
+		t.Fatal("OpenCode adapter did not use the selected active Core")
+	}
+}
+
 func TestSetupInstallsBackgroundServiceOnMacOS(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("LaunchAgent setup is macOS-specific")
@@ -251,6 +309,50 @@ func TestSetupCreateChatInstallsKimiHooks(t *testing.T) {
 	out := setup.Out.(*bytes.Buffer).String()
 	if !strings.Contains(out, "Kimi Code 通知钩子已安装并验证") {
 		t.Fatalf("missing kimi install notice: %s", out)
+	}
+}
+
+func TestSetupCanPauseForOneTimeBinding(t *testing.T) {
+	setup, _, prompter, codex, kimi := newFixture(t)
+	prompter.selects = []int{2, 1} // binding path, user identity
+	prompter.inputs = []string{"Team notifications"}
+	called := false
+	setup.CreateBinding = func(
+		_ context.Context,
+		request BindingRequest,
+	) (BindingResult, error) {
+		called = true
+		if request.ChannelName != "Team notifications" ||
+			request.Identity != "user" ||
+			request.LarkCLIPath == "" {
+			t.Fatalf("binding request = %#v", request)
+		}
+		return BindingResult{
+			Code:        "AGB-01234-56789-ABCDE-FGHJK",
+			ChannelName: request.ChannelName,
+			Identity:    request.Identity,
+			ExpiresAt:   time.Now().Add(10 * time.Minute),
+		}, nil
+	}
+
+	report, err := setup.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called || report.Binding == nil ||
+		report.Binding.Code != "AGB-01234-56789-ABCDE-FGHJK" {
+		t.Fatalf("pending binding report = %#v", report)
+	}
+	if codex.installed || kimi.installed || report.Service != "" {
+		t.Fatal("pending binding setup installed Hooks or service before a channel existed")
+	}
+	if _, err := os.Stat(setup.ConfigFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pending binding setup wrote config: %v", err)
+	}
+	out := setup.Out.(*bytes.Buffer).String()
+	if !strings.Contains(out, report.Binding.Code) ||
+		!strings.Contains(out, "agentbell bind complete --code-stdin") {
+		t.Fatalf("missing binding continuation guidance: %s", out)
 	}
 }
 
@@ -401,6 +503,115 @@ func TestSetupDetectsDesktopConfigFromOfficialEnvironmentOverrides(t *testing.T)
 		}
 	}
 	t.Fatal("Claude agent status is missing")
+}
+
+func TestSetupM15DetectionRespectsDesktopPlatforms(t *testing.T) {
+	setup, _, _, _, _ := newFixture(t)
+	for _, directory := range []string{".qoderwork", ".trae"} {
+		if err := os.MkdirAll(filepath.Join(setup.HomeDir, directory), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setup.GOOS = "linux"
+	if err := setup.resolve(); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range setup.detectAgents() {
+		if (status.ID == "qoder-work" || status.ID == "trae") && status.Detected {
+			t.Fatalf("%s must not be offered on Linux: %#v", status.ID, status)
+		}
+	}
+	setup.GOOS = "windows"
+	found := 0
+	for _, status := range setup.detectAgents() {
+		if status.ID == "qoder-work" || status.ID == "trae" {
+			if !status.Detected || status.Source != "config-dir" {
+				t.Fatalf("%s was not detected on Windows: %#v", status.ID, status)
+			}
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("missing M1.5 agent statuses: %d", found)
+	}
+}
+
+func TestSetupM15DetectionFindsDesktopApplications(t *testing.T) {
+	setup, _, _, _, _ := newFixture(t)
+	setup.GOOS = "darwin"
+	setup.LookPath = func(string) (string, error) {
+		return "", errors.New("not found")
+	}
+	info, err := os.Stat(setup.HomeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup.Stat = func(path string) (os.FileInfo, error) {
+		if path == filepath.Join(string(filepath.Separator), "Applications", "QoderWork CN.app") ||
+			path == filepath.Join(string(filepath.Separator), "Applications", "Trae CN.app") {
+			return info, nil
+		}
+		return nil, os.ErrNotExist
+	}
+	if err := setup.resolve(); err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, status := range setup.detectAgents() {
+		if status.ID == "qoder-work" || status.ID == "trae" {
+			if !status.Detected || status.Source != "application" {
+				t.Fatalf("%s system application was not detected: %#v", status.ID, status)
+			}
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("missing M1.5 application statuses: %d", found)
+	}
+}
+
+func TestDesktopInstallPathsUsesWindowsApplicationRoots(t *testing.T) {
+	root := t.TempDir()
+	getenv := func(name string) string {
+		if name == "LOCALAPPDATA" {
+			return filepath.Join(root, "Local")
+		}
+		if name == "ProgramFiles" {
+			return filepath.Join(root, "Programs")
+		}
+		return ""
+	}
+	for _, testCase := range []struct {
+		agentID string
+		appName string
+	}{
+		{agentID: "qoder-work", appName: "QoderWork.exe"},
+		{agentID: "trae", appName: "TRAE.exe"},
+	} {
+		paths := desktopInstallPaths("windows", getenv, testCase.agentID)
+		if len(paths) != 3 || !strings.HasSuffix(paths[0], testCase.appName) ||
+			!strings.HasPrefix(paths[0], getenv("LOCALAPPDATA")) ||
+			!strings.HasPrefix(paths[2], getenv("ProgramFiles")) {
+			t.Fatalf("unexpected %s install paths: %#v", testCase.agentID, paths)
+		}
+	}
+	if paths := desktopInstallPaths("linux", getenv, "trae"); paths != nil {
+		t.Fatalf("unsupported platform returned install paths: %#v", paths)
+	}
+	if paths := desktopInstallPaths("darwin", getenv, "unknown"); paths != nil {
+		t.Fatalf("unknown product returned install paths: %#v", paths)
+	}
+	if paths := desktopInstallPaths("darwin", getenv, "qoder-work"); len(paths) != 2 ||
+		!strings.HasSuffix(paths[1], "QoderWork CN.app") {
+		t.Fatalf("QoderWork CN application path is missing: %#v", paths)
+	}
+	if paths := desktopInstallPaths("darwin", getenv, "trae"); len(paths) != 2 ||
+		!strings.HasSuffix(paths[1], "Trae CN.app") {
+		t.Fatalf("TRAE CN application path is missing: %#v", paths)
+	}
+	if paths := desktopInstallPaths("windows", func(string) string { return "" }, "trae"); len(paths) != 0 {
+		t.Fatalf("unset Windows roots returned relative install paths: %#v", paths)
+	}
 }
 
 func TestSetupInstallsMissingLarkCLI(t *testing.T) {
@@ -655,13 +866,19 @@ func TestExecRunner(t *testing.T) {
 	}
 }
 
-func TestSetupOpenCodeAndQoderAdapters(t *testing.T) {
+func TestSetupOpenCodeQoderAndM15Adapters(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	if err := os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(home, ".qoder"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".qoderwork"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".trae"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	runner := &fakeRunner{
@@ -676,12 +893,14 @@ func TestSetupOpenCodeAndQoderAdapters(t *testing.T) {
 		captureErrors: map[string]error{},
 	}
 	prompter := &fakePrompter{
-		confirms: []bool{true, true}, // opencode hook install, qoder hook install
+		confirms: []bool{true, true, true, true},
 		selects:  []int{0, 0},
 		inputs:   []string{"通知"},
 	}
 	opencode := &fakeHookAdapter{id: "opencode", hookPath: "/fake/plugins/agentbell.js"}
 	qoder := &fakeHookAdapter{id: "qoder", hookPath: "/fake/settings.json"}
+	qoderWork := &fakeHookAdapter{id: "qoder-work", hookPath: "/fake/qoderwork/settings.json"}
+	trae := &fakeHookAdapter{id: "trae", hookPath: "/fake/trae/hooks.json"}
 	binaryDir := filepath.Join(root, "bin")
 	setup := &Setup{
 		Runner:   runner,
@@ -696,12 +915,19 @@ func TestSetupOpenCodeAndQoderAdapters(t *testing.T) {
 		HomeDir:    home,
 		ConfigFile: filepath.Join(root, "config", "config.json"),
 		StateDir:   filepath.Join(root, "state"),
+		GOOS:       "darwin",
 		Out:        &bytes.Buffer{},
 		NewOpenCodeAdapter: func() (hookAdapter, error) {
 			return opencode, nil
 		},
 		NewQoderAdapter: func() (hookAdapter, error) {
 			return qoder, nil
+		},
+		NewQoderWorkAdapter: func() (hookAdapter, error) {
+			return qoderWork, nil
+		},
+		NewTraeAdapter: func() (hookAdapter, error) {
+			return trae, nil
 		},
 	}
 	report, err := setup.Run(context.Background())
@@ -713,6 +939,12 @@ func TestSetupOpenCodeAndQoderAdapters(t *testing.T) {
 	}
 	if !qoder.installed || report.QoderHook == "" {
 		t.Fatal("qoder adapter was not installed")
+	}
+	if !qoderWork.installed || report.QoderWorkHook == "" {
+		t.Fatal("qoder-work adapter was not installed")
+	}
+	if !trae.installed || report.TraeHook == "" {
+		t.Fatal("TRAE adapter was not installed")
 	}
 	out := setup.Out.(*bytes.Buffer).String()
 	if !strings.Contains(out, "OpenCode 通知钩子已安装并验证") {
@@ -726,5 +958,11 @@ func TestSetupOpenCodeAndQoderAdapters(t *testing.T) {
 	}
 	if !strings.Contains(out, "Qoder CLI 与 IDE 共享用户级 settings Hook") {
 		t.Fatalf("missing qoder guidance: %s", out)
+	}
+	if !strings.Contains(out, "QoderWork 不支持 Hook 热更新") {
+		t.Fatalf("missing QoderWork restart guidance: %s", out)
+	}
+	if !strings.Contains(out, "允许 AgentBell Hook 自动在本地运行") {
+		t.Fatalf("missing TRAE execution guidance: %s", out)
 	}
 }

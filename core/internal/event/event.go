@@ -35,13 +35,7 @@ const (
 )
 
 var (
-	allowedSources = setOf(
-		"codex", "claude", "opencode", "kimi", "qoder",
-		"zcode", "workbuddy", "trae", "kimi-work",
-	)
-	allowedSurfaces = setOf("cli", "tui", "ide", "desktop", "jetbrains", "cloud")
-	allowedRuntimes = setOf("host", "wsl", "container", "ssh", "vendor-cloud")
-	allowedEvents   = setOf(
+	knownEvents = []string{
 		EventTaskCompleted,
 		EventTaskFailed,
 		EventAgentWaiting,
@@ -49,7 +43,14 @@ var (
 		EventSessionInterrupted,
 		EventSubagentCompleted,
 		EventAgentInfo,
+	}
+	allowedSources = setOf(
+		"codex", "claude", "opencode", "kimi", "qoder", "qoder-work",
+		"zcode", "workbuddy", "trae", "kimi-work",
 	)
+	allowedSurfaces   = setOf("cli", "tui", "ide", "desktop", "jetbrains", "cloud")
+	allowedRuntimes   = setOf("host", "wsl", "container", "ssh", "vendor-cloud")
+	allowedEvents     = setOf(knownEvents...)
 	allowedStatuses   = setOf(StatusCompleted, StatusFailed, StatusAttention, StatusInfo)
 	allowedPriorities = setOf("normal", "high", "urgent")
 	allowedPrivacy    = setOf(PrivacyMetadataOnly, PrivacySummary, PrivacyFull)
@@ -73,6 +74,15 @@ type Notification struct {
 	CWD            string    `json:"cwd,omitempty"`
 	Summary        string    `json:"summary,omitempty"`
 }
+
+func IsKnownSource(value string) bool   { return allowedSources[value] }
+func IsKnownSurface(value string) bool  { return allowedSurfaces[value] }
+func IsKnownRuntime(value string) bool  { return allowedRuntimes[value] }
+func IsKnownEvent(value string) bool    { return allowedEvents[value] }
+func IsKnownStatus(value string) bool   { return allowedStatuses[value] }
+func IsKnownPriority(value string) bool { return allowedPriorities[value] }
+func IsKnownPrivacy(value string) bool  { return allowedPrivacy[value] }
+func KnownEvents() []string             { return append([]string(nil), knownEvents...) }
 
 func (notification Notification) Validate() error {
 	if notification.Version != Version {
@@ -188,7 +198,7 @@ func Normalize(adapterID, surface, runtimeName string, raw []byte, now time.Time
 	if rawName == "" {
 		rawName = payload.Type
 	}
-	canonical, status := canonicalEvent(rawName, payload.NotificationType)
+	canonical, status := canonicalEvent(adapterID, rawName, payload.NotificationType)
 
 	occurredAt := now.UTC()
 	for _, candidate := range []string{payload.OccurredAt, payload.Timestamp} {
@@ -310,6 +320,7 @@ func sourceForAdapter(adapterID string) (string, bool) {
 		"kimi":        "kimi",
 		"kimi-code":   "kimi",
 		"qoder":       "qoder",
+		"qoder-work":  "qoder-work",
 		"zcode":       "zcode",
 		"workbuddy":   "workbuddy",
 		"trae":        "trae",
@@ -319,7 +330,7 @@ func sourceForAdapter(adapterID string) (string, bool) {
 	return source, ok
 }
 
-func canonicalEvent(rawName, notificationType string) (string, string) {
+func canonicalEvent(adapterID, rawName, notificationType string) (string, string) {
 	switch strings.ToLower(rawName) {
 	case "stop", "completed", "session.idle", "task.completed":
 		return EventTaskCompleted, StatusCompleted
@@ -334,6 +345,14 @@ func canonicalEvent(rawName, notificationType string) (string, string) {
 	case "agent.waiting":
 		return EventAgentWaiting, StatusAttention
 	case "notification":
+		if adapterID == "trae" {
+			switch {
+			case strings.EqualFold(notificationType, "idle_prompt"):
+				return EventTaskCompleted, StatusCompleted
+			case strings.EqualFold(notificationType, "permission_prompt"):
+				return EventApprovalRequired, StatusAttention
+			}
+		}
 		if strings.EqualFold(notificationType, "idle_prompt") ||
 			strings.EqualFold(notificationType, "agent_needs_input") {
 			return EventAgentWaiting, StatusAttention

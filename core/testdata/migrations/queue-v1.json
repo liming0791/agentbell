@@ -1,0 +1,24 @@
+{
+  "queueVersion": 1,
+  "id": "0123456789abcdef0123456789abcdef",
+  "state": "pending",
+  "event": {
+    "version": "1",
+    "source": "codex",
+    "surface": "cli",
+    "runtime": "host",
+    "event": "task.completed",
+    "status": "completed",
+    "occurredAt": "2026-01-02T03:04:05Z",
+    "sessionId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "taskId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "turnId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "idempotencyKey": "fixture:queue-v1:0123456789abcdef",
+    "priority": "normal",
+    "privacyLevel": "metadata-only",
+    "project": "fixture-project"
+  },
+  "attempts": 0,
+  "createdAt": "2026-01-02T03:04:05Z",
+  "updatedAt": "2026-01-02T03:04:05Z"
+}

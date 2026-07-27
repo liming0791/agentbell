@@ -10,7 +10,7 @@ import (
 var sourceNames = map[string]string{
 	"codex": "Codex", "claude": "Claude Code", "opencode": "OpenCode",
 	"kimi": "Kimi Code", "qoder": "Qoder", "zcode": "ZCode",
-	"workbuddy": "WorkBuddy", "trae": "TRAE", "kimi-work": "Kimi Work",
+	"qoder-work": "QoderWork", "workbuddy": "WorkBuddy", "trae": "TRAE", "kimi-work": "Kimi Work",
 }
 
 var statusLines = map[string]string{

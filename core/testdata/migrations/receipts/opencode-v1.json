@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "adapter": "opencode",
+  "pluginPath": "/fixture/opencode/plugins/agentbell.js",
+  "executable": "/fixture/agentbell-v1",
+  "installedAt": "2026-01-02T03:04:05Z"
+}

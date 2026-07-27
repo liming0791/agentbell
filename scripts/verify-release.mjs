@@ -31,6 +31,14 @@ const manifests = new Map([
   [
     "plugins/kimi/agentbell/kimi.plugin.json",
     await readJson("plugins/kimi/agentbell/kimi.plugin.json")
+  ],
+  [
+    "plugins/opencode/agentbell/opencode.plugin.json",
+    await readJson("plugins/opencode/agentbell/opencode.plugin.json")
+  ],
+  [
+    "plugins/qoder/agentbell/.qoder-plugin/plugin.json",
+    await readJson("plugins/qoder/agentbell/.qoder-plugin/plugin.json")
   ]
 ]);
 

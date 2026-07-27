@@ -59,6 +59,36 @@ Node.js 保留为 npm 安装入口和开发期脚手架，例如 `npx @agentbell
 - 默认重试：`1s/5s/30s/2m/10m`，达到上限后保留 dead-letter 供 `doctor` 查看。
 - 状态迁移先持久化目标再移除来源；启动时修复重复副本并恢复超时租约。
 
+### M2 稳定入口与远程边界（开发中）
+
+受管安装把版本化 Core 与版本无关的 `agentbell-bridge` 分开。`active.json` 只记录受管
+版本、目标、Core/stable bridge checksum 和 activation generation；Codex、Claude Code、
+Kimi Code Hook 以及登录服务固定调用 bridge，由 bridge 校验 active state 后分发到当前
+Core。这样后续
+升级/回滚不需要重写 Hook 或服务定义。当前工作树已接通 active-state App wiring、
+generation-aware runtime proof、stable Service 定义和 `service restart`；跨旧 Release
+升级/Hook 字节不变/回滚/卸载的自动 smoke 已接入发布流水线，真实新 RC 运行尚未完成。
+首次从 M1 迁移时，bootstrap 会识别并校验旧式无 `schemaVersion` 的 `install.json`；
+只有一个有效旧版本时自动纳入 `previous`，存在多个候选时要求显式 `--from`，不能猜测。
+rollback 保留当前协议版本的 stable bridge，并从 active state 校验其独立 checksum；
+安装事务 id 与后续 activation/rollback 事务 id 不要求相同。
+
+远程事件继续使用 NotificationEvent v1 作为载荷，在外层增加独立 RelayEnvelope v1。
+远端 Hook 只写有容量上限的 durable outbox，转发器通过有界 stdio 或显式 HTTPS ingress
+发送；接收端验证 Ed25519、timestamp、nonce、peer scope 和 exact body，并在 receipt
+与本机 queue 都持久提交后 ACK。当前工作树已有一次性 `/v1/pair` enrollment、
+`relay configure/run/bind/peers/receipts`、`remote configure/pair/emit/drain`、nonce
+清理调度，以及 Keychain、Secret Service、DPAPI 和显式 0600 文件私钥后端。
+同一 producer idempotency key 再次到达 remote shim 时复用第一次已经持久化的签名
+envelope，不重新生成 nonce/timestamp；relay 入口仍拒绝同 delivery key 的不同 exact
+body，避免把生产者去重误用为传输层正文降级。
+WSL/SSH/container 的精确 argv host-pull、HTTPS push 与用户级 service 调度已完成自动
+测试。Host 侧使用独立 `host-connectors.json` 多 target registry，不读取或复制远端
+`remote.json` 的 outbox/PrivateKeyRef；每个 connector 使用独立锁、退避和脱敏 runtime
+proof，HTTPS 本机 outbox 则是单独 worker。Host 配对通过 exact argv + bounded stdio
+完成，不开放 listener，并以 registry 的 team/origin/runtime 校验 child hello；跨主机
+实机证据仍未完成。
+
 ## 跨平台安装
 
 | 平台 | 正式分发 | 用户级服务 | 凭据存储 |
@@ -77,7 +107,9 @@ Hook 配置必须写入 AgentBell 二进制的绝对路径，不能依赖 GUI �
 当前本地开发版本在 macOS 使用 LaunchAgent，在 Windows 使用当前用户登录计划任务，
 在 Linux 优先使用 systemd user、不可用时回退 XDG Autostart。由于 `lark-cli` 本身
 可能通过 `/usr/bin/env node` 启动，配置保存绝对 `larkCliPath`；需要 PATH 的服务定义
-会显式包含它的运行目录。
+会显式包含它的运行目录。macOS LaunchAgent 还必须显式设置安装用户的 `HOME`；缺少
+`HOME` 时，后台 `lark-cli` 可能无法读取登录 Keychain，形成前台测试成功、后台发送
+失败的假象。
 
 ## 运行位置不是操作系统
 
@@ -147,8 +179,10 @@ Codex 明确要求 `task.completed`，不能由 `approval.required` 代替。
 - JSON/TOML 使用结构化合并，不覆盖整个配置文件。
 - 修改前创建带哈希的备份，写入采用临时文件 + 原子替换。
 - Adapter 使用 receipt、标记区域或完整命令指纹确认所有权，卸载时只删除自身配置。
-- `agentbell uninstall` 先预检五个 Adapter 与登录服务；npm bootstrap 等 Core 退出后
-  只删除当前受管版本目录，默认保留配置、队列与诊断数据。
+- `agentbell uninstall` 先预检七个 Adapter 与登录服务；npm bootstrap 等 Core 退出后
+  只删除当前受管版本目录。预检还汇总 remote、host connector、relay peer 和活动版本
+  指针，但默认保留配置、队列、远程元数据、peer、私钥与诊断数据；私钥删除要求独立的
+  删除参数和二次确认参数。
 - 插件安装优先于直接修改用户设置。
 - 所有通知 Hook fail-open；AgentBell 故障不得阻塞原 Agent。
 
