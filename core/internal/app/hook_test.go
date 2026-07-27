@@ -55,8 +55,8 @@ func TestHookReconcileInstallsOnlyManagedStableHook(t *testing.T) {
 	    "Stop": [{
 	      "hooks": [{
 	        "type": "command",
-	        "command": "/external/notifier --done",
-	        "commandWindows": "C:\\external\\notifier.exe --done"
+	        "command": "\"/external/notifier\" --done",
+	        "commandWindows": "\"C:\\external\\notifier.exe\" --done"
 	      }]
 	    }]
 	  }

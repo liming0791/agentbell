@@ -83,7 +83,7 @@ func TestSchedulerRunsHTTPSDurableOutboxAsPush(t *testing.T) {
 	path := filepath.Join(root, "remote.json")
 	value := validRemoteConfig("https")
 	value.Outbox.Path = remoteconfig.PathRef{
-		Platform: "darwin",
+		Platform: runtime.GOOS,
 		Value:    filepath.Join(root, "outbox"),
 	}
 	writeSchedulerRemote(t, path, value)
@@ -91,7 +91,7 @@ func TestSchedulerRunsHTTPSDurableOutboxAsPush(t *testing.T) {
 	scheduler := HostScheduler{
 		RemoteConfigPath: path,
 		StateDir:         root,
-		Platform:         "darwin",
+		Platform:         runtime.GOOS,
 		PushAttempt: func(context.Context, remoteconfig.RemoteConfig) (int, error) {
 			pushes.Add(1)
 			return 2, nil
@@ -309,14 +309,14 @@ func TestSchedulerPlatformMismatchAndHTTPSPushFailure(t *testing.T) {
 		path := filepath.Join(root, "remote.json")
 		value := validRemoteConfig("https")
 		value.Outbox.Path = remoteconfig.PathRef{
-			Platform: "linux",
+			Platform: runtime.GOOS,
 			Value:    filepath.Join(root, "outbox"),
 		}
 		writeSchedulerRemote(t, path, value)
 		status, err := (HostScheduler{
 			RemoteConfigPath: path,
 			StateDir:         root,
-			Platform:         "linux",
+			Platform:         runtime.GOOS,
 			PushAttempt: func(context.Context, remoteconfig.RemoteConfig) (int, error) {
 				return 0, errors.New("TLS secret")
 			},

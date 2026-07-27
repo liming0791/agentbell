@@ -204,6 +204,10 @@ Technical Preview 默认只在隔离数据目录执行 `--dry-run` 或自动 fix
 
 远端私钥默认进入 macOS Keychain、Linux Secret Service 或 Windows DPAPI；只有显式
 同时传入 `--key-file` 和 `--acknowledge-file-fallback` 才允许使用权限为 0600 的文件。
+Relay/remoteconfig 的配置、outbox 与锁在 POSIX 上使用 `0700/0600`；Windows 不把
+POSIX mode bit 当成 ACL，而是继承当前用户 AgentBell 状态根的 DACL。Windows 上短暂的
+`ACCESS_DENIED`、sharing violation 或 lock violation 会按锁竞争有界重试；持续超时
+仍会失败，不能被当成成功或静默覆盖。
 `remote emit` 在事件发生处完成 metadata-only 裁剪并只写有容量上限的 durable outbox；
 `remote pair` 的明文绑定码只从 stdin 读取。HTTPS connector 必须使用 HTTPS；只有明确的
 loopback SSH tunnel 才允许 HTTP。本机 `remote.json` 只拥有本机 remote emit/HTTPS

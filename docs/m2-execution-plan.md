@@ -172,7 +172,9 @@ channels、channel name、defaultChannel 和 legacy event allowlist。新增能�
 - 回滚 preflight 检查 sidecar 的 `minCoreVersion`；旧 Core 不理解且会改变用户可见行为时
   拒绝静默回滚，只有显式导出/降级设置后才允许；
 - `config.json` 的 Channel 写操作仍保持 M1 可读；
-- 配置写操作使用文件锁和 compare-before-write，避免 setup/service/CLI 并发覆盖。
+- 配置写操作使用带 owner token 的 `O_EXCL` 文件锁和 compare-before-write，避免
+  setup/service/CLI 并发覆盖；Windows 锁竞争兼容共享冲突错误，POSIX 继续执行
+  `0700/0600`，Windows 继承当前用户状态根 DACL。
 
 模板允许字段固定为：
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -433,6 +434,26 @@ func assertPrivateModes(t *testing.T, directory, path string) {
 	fileInfo, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !directoryInfo.IsDir() || !fileInfo.Mode().IsRegular() {
+		t.Fatalf(
+			"sidecar paths are not regular: directory=%v file=%v",
+			directoryInfo.Mode(),
+			fileInfo.Mode(),
+		)
+	}
+	if runtime.GOOS == "windows" {
+		directoryLink, directoryErr := os.Lstat(directory)
+		fileLink, fileErr := os.Lstat(path)
+		if directoryErr != nil ||
+			fileErr != nil ||
+			directoryLink.Mode()&os.ModeSymlink != 0 ||
+			fileLink.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf(
+				"Windows sidecar path is not an inherited-DACL regular path",
+			)
+		}
+		return
 	}
 	if directoryInfo.Mode().Perm() != 0o700 {
 		t.Fatalf("directory mode = %o, want 700", directoryInfo.Mode().Perm())

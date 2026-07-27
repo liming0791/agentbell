@@ -8,6 +8,23 @@ import (
 	"time"
 )
 
+func TestOwnedStorageLockReleaseDoesNotRemoveSuccessor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.lock")
+	if err := os.WriteFile(path, []byte("successor"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ownedStorageLockRelease(path, "previous")()
+
+	value, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(value) != "successor" {
+		t.Fatalf("successor lock changed to %q", value)
+	}
+}
+
 func TestDurableStoreConstructorsRejectEmptyRoots(t *testing.T) {
 	if _, err := OpenNonceStore("", MinimumNonceRetention); err == nil {
 		t.Fatal("empty nonce root must fail")

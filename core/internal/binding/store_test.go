@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -39,16 +40,24 @@ func TestCreateStoresOnlyHashAndExpires(t *testing.T) {
 	if bytes.Contains(value, []byte(code)) {
 		t.Fatal("binding code was persisted in plaintext")
 	}
-	info, err := os.Stat(filepath.Join(root, "pending", files[0].Name()))
+	info, err := os.Lstat(filepath.Join(root, "pending", files[0].Name()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("record mode = %o", info.Mode().Perm())
-	}
+	assertPrivateBindingRecord(t, info)
 
 	if _, err := store.Load(code, now.Add(11*time.Minute)); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expired load error = %v", err)
+	}
+}
+
+func assertPrivateBindingRecord(t *testing.T, info os.FileInfo) {
+	t.Helper()
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("binding record is not a regular file: %v", info.Mode())
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("record mode = %o, want 600", info.Mode().Perm())
 	}
 }
 

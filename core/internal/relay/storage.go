@@ -2,6 +2,8 @@ package relay
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,7 +23,7 @@ func ensurePrivateDirectory(path string) error {
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o700)
+	return setPrivatePermissions(path, 0o700)
 }
 
 func writeNewPrivateJSON(path, temporaryDirectory string, value any) error {
@@ -42,7 +44,7 @@ func writeNewPrivateJSON(path, temporaryDirectory string, value any) error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := setPrivateFilePermissions(temporary, 0o600); err != nil {
 		_ = temporary.Close()
 		return err
 	}
@@ -90,13 +92,23 @@ func syncDirectory(path string) error {
 
 func acquireStorageLock(path string) (func(), error) {
 	deadline := time.Now().Add(storageLockTimeout)
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, err
+	}
+	token := hex.EncodeToString(tokenBytes)
 	for {
 		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err == nil {
-			if chmodErr := file.Chmod(0o600); chmodErr != nil {
+			if chmodErr := setPrivateFilePermissions(file, 0o600); chmodErr != nil {
 				_ = file.Close()
 				_ = os.Remove(path)
 				return nil, chmodErr
+			}
+			if _, writeErr := file.WriteString(token); writeErr != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return nil, writeErr
 			}
 			if syncErr := file.Sync(); syncErr != nil {
 				_ = file.Close()
@@ -107,15 +119,22 @@ func acquireStorageLock(path string) (func(), error) {
 				_ = os.Remove(path)
 				return nil, closeErr
 			}
-			return func() {
-				_ = os.Remove(path)
-			}, nil
+			return ownedStorageLockRelease(path, token), nil
 		}
-		if !errors.Is(err, os.ErrExist) {
+		if !isStorageLockContention(err) {
 			return nil, err
 		}
 		info, statErr := os.Stat(path)
 		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if isStorageLockContention(statErr) {
+			if time.Now().After(deadline) {
+				return nil, errors.New(
+					"timed out waiting for relay storage lock",
+				)
+			}
+			time.Sleep(2 * time.Millisecond)
 			continue
 		}
 		if statErr != nil {
@@ -123,15 +142,32 @@ func acquireStorageLock(path string) (func(), error) {
 		}
 		if time.Since(info.ModTime()) > storageLockStale {
 			if removeErr := os.Remove(path); removeErr != nil &&
-				!errors.Is(removeErr, os.ErrNotExist) {
+				!errors.Is(removeErr, os.ErrNotExist) &&
+				!isStorageLockContention(removeErr) {
 				return nil, removeErr
 			}
+			if time.Now().After(deadline) {
+				return nil, errors.New(
+					"timed out waiting for relay storage lock",
+				)
+			}
+			time.Sleep(2 * time.Millisecond)
 			continue
 		}
 		if time.Now().After(deadline) {
 			return nil, errors.New("timed out waiting for relay storage lock")
 		}
 		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func ownedStorageLockRelease(path, token string) func() {
+	return func() {
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != token {
+			return
+		}
+		_ = os.Remove(path)
 	}
 }
 

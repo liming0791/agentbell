@@ -116,18 +116,24 @@ func TestFileFallbackPutGetDeleteIsPrivateAndAtomic(t *testing.T) {
 	if err := store.Put(ctx, reference, second); err != nil {
 		t.Fatalf("atomic replacement failed: %v", err)
 	}
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("secret fallback is not a regular file: %v", info.Mode())
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("file mode = %o, want 600", info.Mode().Perm())
 	}
-	directoryInfo, err := os.Stat(filepath.Dir(path))
+	directoryInfo, err := os.Lstat(filepath.Dir(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if directoryInfo.Mode().Perm()&0o077 != 0 {
+	if !directoryInfo.IsDir() || directoryInfo.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("secret fallback parent is not a directory: %v", directoryInfo.Mode())
+	}
+	if runtime.GOOS != "windows" && directoryInfo.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("directory mode = %o, want private", directoryInfo.Mode().Perm())
 	}
 	got, err := store.Get(ctx, reference)
@@ -424,10 +430,22 @@ func TestNewValidatesManagedRootAndContext(t *testing.T) {
 }
 
 func TestCommandRunner(t *testing.T) {
+	t.Setenv("GO_WANT_AGENTBELL_SECRETSTORE_HELPER", "1")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helperArguments := func(mode string) []string {
+		return []string{
+			"-test.run=^TestSecretStoreExecHelper$",
+			"--",
+			mode,
+		}
+	}
 	output, err := (execRunner{}).Run(
 		context.Background(),
-		"/usr/bin/printf",
-		[]string{"agentbell"},
+		executable,
+		helperArguments("print"),
 		nil,
 	)
 	if err != nil || string(output) != "agentbell" {
@@ -435,7 +453,7 @@ func TestCommandRunner(t *testing.T) {
 	}
 	if _, err := (execRunner{}).Run(
 		context.Background(),
-		"/definitely/not/an/executable",
+		filepath.Join(t.TempDir(), "missing-executable"),
 		nil,
 		nil,
 	); !errors.Is(err, ErrBackend) {
@@ -443,19 +461,41 @@ func TestCommandRunner(t *testing.T) {
 	}
 	if _, err := (execRunner{}).Run(
 		context.Background(),
-		"/usr/bin/printf",
-		[]string{strings.Repeat("x", maximumCommandOutputBytes+1)},
+		executable,
+		helperArguments("oversized"),
 		nil,
 	); !errors.Is(err, ErrBackend) {
 		t.Fatalf("oversized output error = %v", err)
 	}
 	if _, err := (execRunner{}).Run(
 		context.Background(),
-		"/usr/bin/false",
-		nil,
+		executable,
+		helperArguments("failure"),
 		nil,
 	); err == nil {
 		t.Fatal("non-zero exit succeeded")
+	}
+}
+
+func TestSecretStoreExecHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_AGENTBELL_SECRETSTORE_HELPER") != "1" {
+		return
+	}
+	mode := os.Args[len(os.Args)-1]
+	switch mode {
+	case "print":
+		_, _ = os.Stdout.WriteString("agentbell")
+		os.Exit(0)
+	case "oversized":
+		_, _ = os.Stdout.Write(bytes.Repeat(
+			[]byte("x"),
+			maximumCommandOutputBytes+1,
+		))
+		os.Exit(0)
+	case "failure":
+		os.Exit(23)
+	default:
+		os.Exit(24)
 	}
 }
 

@@ -27,6 +27,7 @@ func newTestOpenCodeAdapter(t *testing.T) *OpenCodeAdapter {
 
 func TestOpenCodeInstallVerifyUninstall(t *testing.T) {
 	adapterValue := newTestOpenCodeAdapter(t)
+	adapterValue.Executable = `C:\Program Files\AgentBell\agentbell.exe`
 
 	installed, err := adapterValue.Install(false)
 	if err != nil {
@@ -44,7 +45,7 @@ func TestOpenCodeInstallVerifyUninstall(t *testing.T) {
 	if !isAgentBellPlugin(string(raw)) {
 		t.Fatalf("plugin missing ownership marker: %s", raw)
 	}
-	if !strings.Contains(string(raw), adapterValue.Executable) {
+	if !hasOpenCodeExecutable(string(raw), adapterValue.Executable) {
 		t.Fatalf("plugin missing executable path: %s", raw)
 	}
 	for _, event := range opencodeHookEvents {
@@ -173,6 +174,7 @@ func TestOpenCodeDiagnoseWithRuntimeProof(t *testing.T) {
 
 func TestOpenCodeVerifyUsesReceiptAfterExecutableMove(t *testing.T) {
 	adapterValue := newTestOpenCodeAdapter(t)
+	adapterValue.Executable = `C:\Program Files\AgentBell\agentbell.exe`
 	if _, err := adapterValue.Install(false); err != nil {
 		t.Fatal(err)
 	}

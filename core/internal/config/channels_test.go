@@ -175,7 +175,7 @@ func TestChannelTransactionsDryRunDoesNotWrite(t *testing.T) {
 func TestChannelTransactionsInitializeIsExclusiveAndDryRunnable(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.json")
-	value := transactionConfig()
+	value := transactionConfig(t)
 	transactions := NewChannelTransactions(path)
 
 	planned, err := transactions.Initialize(
@@ -554,10 +554,11 @@ func writeTransactionConfig(t *testing.T) string {
 	return path
 }
 
-func transactionConfig() Config {
+func transactionConfig(t *testing.T) Config {
+	t.Helper()
 	return Config{
 		DefaultChannel: "primary",
-		LarkCLIPath:    filepath.Join(string(filepath.Separator), "bin", "lark-cli"),
+		LarkCLIPath:    filepath.Join(t.TempDir(), "bin", "lark-cli"),
 		Notifications: Notifications{
 			Events:       []string{"task.completed"},
 			PrivacyLevel: "metadata-only",

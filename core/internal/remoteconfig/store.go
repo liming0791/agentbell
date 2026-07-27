@@ -112,7 +112,7 @@ func save(path string, value any) error {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := setSidecarPermissions(directory, 0o700); err != nil {
 		return err
 	}
 	temporary, err := os.CreateTemp(directory, ".agentbell-sidecar-*.tmp")
@@ -124,7 +124,7 @@ func save(path string, value any) error {
 		_ = temporary.Close()
 		_ = os.Remove(temporaryPath)
 	}
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := setSidecarFilePermissions(temporary, 0o600); err != nil {
 		cleanup()
 		return err
 	}
@@ -144,7 +144,7 @@ func save(path string, value any) error {
 		_ = os.Remove(temporaryPath)
 		return err
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := setSidecarPermissions(path, 0o600); err != nil {
 		return err
 	}
 	if runtime.GOOS == "windows" {

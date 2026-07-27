@@ -2,6 +2,7 @@ package remoteconfig
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -285,17 +286,54 @@ func (transactions *RelayTransactions) acquire(
 	if err := os.MkdirAll(filepath.Dir(transactions.Path), 0o700); err != nil {
 		return nil, err
 	}
+	if err := setSidecarPermissions(
+		filepath.Dir(transactions.Path),
+		0o700,
+	); err != nil {
+		return nil, err
+	}
 	lockPath := transactions.Path + ".lock"
 	deadline := time.Now().Add(transactions.lockTimeout)
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, err
+	}
+	token := hex.EncodeToString(tokenBytes)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		err := os.Mkdir(lockPath, 0o700)
+		file, err := os.OpenFile(
+			lockPath,
+			os.O_WRONLY|os.O_CREATE|os.O_EXCL,
+			0o600,
+		)
 		if err == nil {
-			return func() { _ = os.Remove(lockPath) }, nil
+			if permissionErr := setSidecarFilePermissions(
+				file,
+				0o600,
+			); permissionErr != nil {
+				_ = file.Close()
+				_ = os.Remove(lockPath)
+				return nil, permissionErr
+			}
+			if _, writeErr := file.WriteString(token); writeErr != nil {
+				_ = file.Close()
+				_ = os.Remove(lockPath)
+				return nil, writeErr
+			}
+			if syncErr := file.Sync(); syncErr != nil {
+				_ = file.Close()
+				_ = os.Remove(lockPath)
+				return nil, syncErr
+			}
+			if closeErr := file.Close(); closeErr != nil {
+				_ = os.Remove(lockPath)
+				return nil, closeErr
+			}
+			return ownedSidecarLockRelease(lockPath, token), nil
 		}
-		if !errors.Is(err, os.ErrExist) {
+		if !isSidecarLockContention(err) {
 			return nil, err
 		}
 		info, statErr := os.Stat(lockPath)
@@ -304,7 +342,12 @@ func (transactions *RelayTransactions) acquire(
 			if removeErr := os.Remove(lockPath); removeErr == nil ||
 				errors.Is(removeErr, os.ErrNotExist) {
 				continue
+			} else if !isSidecarLockContention(removeErr) {
+				return nil, removeErr
 			}
+		} else if isSidecarLockContention(statErr) {
+			// Windows may transiently report ACCESS_DENIED while another
+			// writer publishes or deletes the lock file.
 		} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 			return nil, statErr
 		}
@@ -318,5 +361,15 @@ func (transactions *RelayTransactions) acquire(
 			return nil, ctx.Err()
 		case <-timer.C:
 		}
+	}
+}
+
+func ownedSidecarLockRelease(path, token string) func() {
+	return func() {
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != token {
+			return
+		}
+		_ = os.Remove(path)
 	}
 }

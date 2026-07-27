@@ -172,7 +172,7 @@ func (adapter *OpenCodeAdapter) Verify() (AdapterResult, error) {
 		}
 		return result, errors.New("AgentBell OpenCode plugin is outdated; run install to update")
 	}
-	if !strings.Contains(string(raw), receipt.Executable) {
+	if !hasOpenCodeExecutable(string(raw), receipt.Executable) {
 		return result, errors.New("AgentBell OpenCode plugin executable does not match the receipt")
 	}
 	result.Installed = true
@@ -292,6 +292,13 @@ export const AgentBell = async () => {
 
 func isAgentBellPlugin(content string) bool {
 	return strings.Contains(content, opencodePluginMarker)
+}
+
+func hasOpenCodeExecutable(content, executable string) bool {
+	const prefix = "  const executable = "
+	declaration := prefix + jsonString(executable) + ";\n"
+	return strings.Count(content, prefix) == 1 &&
+		strings.Contains(content, declaration)
 }
 
 func jsonString(value string) string {

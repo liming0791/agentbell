@@ -24,14 +24,14 @@
 | M2-501～506 Relay/Remote | `relay/`、`remote/`、`remoteconfig/`、`secretstore/`、`app/remote*_test.go`、`scripts/smoke-https-relay.mjs` | 自动测试、macOS Host→Linux container stdio 与隔离 Linux TLS/HTTPS E2E 通过；独立跨主机到飞书待验 |
 | M2-601 doctor | `doctorSchemaVersion=1`、顶层 doctor golden、bridge doctor、connector runtime proof tests | 本地通过；输出脱敏 |
 | M2-602 性能/压力 | stable bridge Hook p95、Relay/32 路 fan-out/queue benchmark、96 durable item stress gate | 本地通过 |
-| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地构建/race/TLS smoke 通过；最终 commit 的 Actions run 待产生 |
+| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地全量门禁通过；PR head 的 Actions 待复验 |
 | M2-604 实机矩阵 | 下表 | 未通过 |
 | M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | workflow 已接线且本地旧 Release asset/TLS smoke 通过；真实新 RC 未运行 |
 
 2026-07-27 本地最终门禁：
 
 - Node.js：89 项测试全部通过，生产模块行覆盖率 82.13%，门禁通过；
-- Go：fmt/vet/fuzz/测试与覆盖率门禁通过，总覆盖率 79.6%；所有规定的 M2 数据面包
+- Go：fmt/vet/fuzz/测试与覆盖率门禁通过，总覆盖率 79.4%；所有规定的 M2 数据面包
   均不低于 80%；
 - `go test -race ./... -count=1` 全包通过；
 - migration fixture、八份版本 manifest、一致性与 npm workspace pack 预检通过；
@@ -109,6 +109,24 @@ PR 首轮 Windows Node.js 22 job 还发现默认服务动作测试使用 POSIX `
 可执行文件，Windows `spawn` 正确返回 `ENOENT`。测试改为给生产执行器注入跨平台 fake
 runner，并直接断言 executable、argv 和 stdio；生产默认仍调用同一个执行器，不再用
 Unix 测试夹具冒充跨平台证据。
+
+后续 [Actions run 30233941208](https://github.com/liming0791/agentbell/actions/runs/30233941208)
+中 Windows Node 测试已通过，Windows Go runner 又暴露出四类独立的 POSIX 假设：
+OpenCode receipt 校验没有按 JSON 字面量处理反斜杠、scheduler fixture 使用 POSIX
+平台路径、权限测试直接比较 `0600/0700`，以及文件/目录锁没有把 Windows 的
+`ACCESS_DENIED`、sharing violation 和 lock violation 识别为竞争。修复后：
+
+- OpenCode 只接受唯一且精确的 `const executable = <JSON string>;` 声明；
+- scheduler、lark-cli 与命令执行测试全部使用 host-native 路径或 Go helper 进程；
+- POSIX 继续严格检查 `0600/0700`；Windows 检查普通文件、目录和非符号链接，并沿用
+  当前用户 AgentBell 状态根的 DACL；
+- Relay 与 remoteconfig 使用带随机 owner token 的 `O_EXCL` 文件锁，Windows
+  短暂共享冲突进入有界重试，旧 owner 不会删除 token 不匹配的 successor lock；
+- Relay 并发去重/容量压力和 remoteconfig 并发事务各连续 30 轮通过，相关包 Windows
+  amd64 测试二进制交叉编译通过；完整本地 `npm run ci` 通过。
+
+交叉编译和本地重复测试仍不等于 Windows 实机产品验收，因此 M2-604 的 Windows 栏
+继续保持待验；M2-603 只在修复后的 PR head Actions 全绿后通过。
 
 ## macOS Host 到 Linux Container 的真实 stdio E2E
 

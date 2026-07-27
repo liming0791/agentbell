@@ -71,11 +71,14 @@ func TestStoreSaveLoadAndRejectUnknownFields(t *testing.T) {
 		t.Fatalf("state changed across save/load: %#v", loaded)
 	}
 
-	info, err := os.Stat(filepath.Join(dataRoot, "bin", ActiveStateFile))
+	info, err := os.Lstat(filepath.Join(dataRoot, "bin", ActiveStateFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("active state is not a regular file: %v", info.Mode())
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("active state mode = %o, want 600", info.Mode().Perm())
 	}
 

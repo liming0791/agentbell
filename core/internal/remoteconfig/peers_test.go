@@ -5,10 +5,28 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 )
+
+func TestOwnedSidecarLockReleaseDoesNotRemoveSuccessor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.json.lock")
+	if err := os.WriteFile(path, []byte("successor"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ownedSidecarLockRelease(path, "previous")()
+
+	value, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(value) != "successor" {
+		t.Fatalf("successor lock changed to %q", value)
+	}
+}
 
 func TestRelayTransactionsInitializeAddRevokeAndDryRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.json")
