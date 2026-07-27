@@ -901,6 +901,36 @@ async function defaultRestartService({ corePath }) {
   }
 }
 
+export function serviceTransitionAction({
+  operation,
+  active,
+  compensation = false
+}) {
+  if (operation === "upgrade" &&
+      (!compensation || active === null)) {
+    return "install";
+  }
+  return "restart";
+}
+
+async function defaultUpgradeService(request) {
+  const action = serviceTransitionAction({
+    operation: "upgrade",
+    active: request.active,
+    compensation: request.compensation
+  });
+  const code = await runExecutable(
+    request.corePath,
+    ["service", action, "--json"],
+    { stdin: "ignore", stdout: "ignore", stderr: "inherit" }
+  );
+  if (code !== 0) {
+    throw new Error(
+      `AgentBell service ${action} exited with code ${code}.`
+    );
+  }
+}
+
 function runExecutable(executable, args, stdio) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
@@ -1497,7 +1527,7 @@ export async function upgrade({
   fetchImpl,
   downloadBundle = defaultDownloadBundle,
   smokeCore = defaultSmokeCore,
-  restartService = defaultRestartService,
+  restartService = defaultUpgradeService,
   writeActive = async (filePath, state) => atomicJSON(filePath, state)
 }) {
   assertVersion(toVersion);

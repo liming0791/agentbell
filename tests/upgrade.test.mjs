@@ -20,6 +20,7 @@ import {
   listVersions,
   resolveActiveCore,
   rollback,
+  serviceTransitionAction,
   stableBridgePath,
   upgrade
 } from "../packages/cli/src/upgrade.mjs";
@@ -31,6 +32,71 @@ const WebURL = globalThis.URL;
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
+
+test("service transition installs bridge mode and restores legacy mode", () => {
+  assert.equal(
+    serviceTransitionAction({
+      operation: "upgrade",
+      active: { activeVersion: "0.3.0-rc.1" }
+    }),
+    "install"
+  );
+  assert.equal(
+    serviceTransitionAction({
+      operation: "upgrade",
+      active: null,
+      compensation: true
+    }),
+    "install"
+  );
+  assert.equal(
+    serviceTransitionAction({
+      operation: "upgrade",
+      active: { activeVersion: "0.3.0-rc.1" },
+      compensation: true
+    }),
+    "restart"
+  );
+  assert.equal(
+    serviceTransitionAction({
+      operation: "rollback",
+      active: { activeVersion: "0.3.0-rc.1" }
+    }),
+    "restart"
+  );
+});
+
+test("upgrade default service transition installs the stable bridge definition", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const callsPath = path.join(dataRoot, "service-calls.txt");
+  const core = Buffer.from(
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${callsPath}'\n`
+  );
+  const bridge = Buffer.from("bridge-0.3.0");
+  const bundle = {
+    core,
+    bridge,
+    coreChecksum: sha256(core),
+    bridgeChecksum: sha256(bridge),
+    signatureStatus: "technical-preview",
+    manifest: {
+      schemaVersion: 1,
+      version: "0.3.0",
+      signatureStatus: "technical-preview"
+    }
+  };
+
+  await upgrade({
+    toVersion: "0.3.0",
+    dataRoot,
+    platform: "linux",
+    architecture: "x64",
+    downloadBundle: async () => bundle,
+    smokeCore: async () => {}
+  });
+
+  assert.equal(await readFile(callsPath, "utf8"), "service install --json\n");
+});
 
 function releaseBundle(version) {
   const core = Buffer.from(`core-${version}`);
