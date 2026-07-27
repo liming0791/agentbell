@@ -916,14 +916,17 @@ export function serviceTransitionAction({
   return "restart";
 }
 
-async function defaultUpgradeService(request) {
+export async function runUpgradeServiceTransition(
+  request,
+  execute = runExecutable
+) {
   const action = serviceTransitionAction({
     operation: "upgrade",
     active: request.active,
     previousActive: request.previousActive,
     compensation: request.compensation
   });
-  const code = await runExecutable(
+  const code = await execute(
     request.corePath,
     ["service", action, "--json"],
     { stdin: "ignore", stdout: "ignore", stderr: "inherit" }
@@ -933,6 +936,10 @@ async function defaultUpgradeService(request) {
       `AgentBell service ${action} exited with code ${code}.`
     );
   }
+}
+
+async function defaultUpgradeService(request) {
+  await runUpgradeServiceTransition(request);
 }
 
 function runExecutable(executable, args, stdio) {

@@ -30,7 +30,7 @@
 
 2026-07-27 本地最终门禁：
 
-- Node.js：89 项测试全部通过，生产模块行覆盖率 82.47%，门禁通过；
+- Node.js：89 项测试全部通过，生产模块行覆盖率 82.13%，门禁通过；
 - Go：fmt/vet/fuzz/测试与覆盖率门禁通过，总覆盖率 79.6%；所有规定的 M2 数据面包
   均不低于 80%；
 - `go test -race ./... -count=1` 全包通过；
@@ -104,6 +104,11 @@ active 中 Core/bridge checksum 与实物一致，transaction 为 committed，�
 该记录证明 macOS 本机真实服务定义迁移和 stable bridge → durable queue →
 LaunchAgent → 飞书链路；没有人为注入服务启动失败，因此自动补偿仍由自动故障测试
 证明。Windows/Linux 服务迁移、真实 tag/draft Release 下载和产品 Hook 字节不变仍待验。
+
+PR 首轮 Windows Node.js 22 job 还发现默认服务动作测试使用 POSIX `#!/bin/sh` 临时
+可执行文件，Windows `spawn` 正确返回 `ENOENT`。测试改为给生产执行器注入跨平台 fake
+runner，并直接断言 executable、argv 和 stdio；生产默认仍调用同一个执行器，不再用
+Unix 测试夹具冒充跨平台证据。
 
 ## macOS Host 到 Linux Container 的真实 stdio E2E
 

@@ -20,6 +20,7 @@ import {
   listVersions,
   resolveActiveCore,
   rollback,
+  runUpgradeServiceTransition,
   serviceTransitionAction,
   stableBridgePath,
   upgrade
@@ -75,49 +76,46 @@ test("service transition installs bridge mode and restores legacy mode", () => {
   );
 });
 
-test("upgrade default service transition installs the stable bridge definition", async (context) => {
-  const dataRoot = await temporaryDataRoot(context);
-  const callsPath = path.join(dataRoot, "service-calls.txt");
-  const bundle = (version) => {
-    const core = Buffer.from(
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${callsPath}'\n`
-    );
-    const bridge = Buffer.from(`bridge-${version}`);
-    return {
-      core,
-      bridge,
-      coreChecksum: sha256(core),
-      bridgeChecksum: sha256(bridge),
-      signatureStatus: "technical-preview",
-      manifest: {
-        schemaVersion: 1,
-        version,
-        signatureStatus: "technical-preview"
-      }
-    };
+test("upgrade default service transition installs the stable bridge definition", async () => {
+  const calls = [];
+  const execute = async (executable, args, stdio) => {
+    calls.push({ executable, args, stdio });
+    return 0;
   };
+  const corePath = path.join("managed", "0.3.0", "agentbell");
+  await runUpgradeServiceTransition({
+    corePath,
+    active: { activeVersion: "0.3.0" },
+    previousActive: null
+  }, execute);
+  await runUpgradeServiceTransition({
+    corePath,
+    active: { activeVersion: "0.3.1" },
+    previousActive: { activeVersion: "0.3.0" }
+  }, execute);
+  await assert.rejects(runUpgradeServiceTransition({
+    corePath,
+    active: null,
+    compensation: true
+  }, async () => 17), /service install exited with code 17/);
 
-  await upgrade({
-    toVersion: "0.3.0",
-    dataRoot,
-    platform: "linux",
-    architecture: "x64",
-    downloadBundle: async () => bundle("0.3.0"),
-    smokeCore: async () => {}
-  });
-  await upgrade({
-    toVersion: "0.3.1",
-    dataRoot,
-    platform: "linux",
-    architecture: "x64",
-    downloadBundle: async () => bundle("0.3.1"),
-    smokeCore: async () => {}
-  });
-
-  assert.equal(
-    await readFile(callsPath, "utf8"),
-    "service install --json\nservice restart --json\n"
-  );
+  assert.deepEqual(calls, [{
+    executable: corePath,
+    args: ["service", "install", "--json"],
+    stdio: {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "inherit"
+    }
+  }, {
+    executable: corePath,
+    args: ["service", "restart", "--json"],
+    stdio: {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "inherit"
+    }
+  }]);
 });
 
 function releaseBundle(version) {
