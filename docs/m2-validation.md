@@ -125,6 +125,20 @@ OpenCode receipt 校验没有按 JSON 字面量处理反斜杠、scheduler fixtu
 - Relay 并发去重/容量压力和 remoteconfig 并发事务各连续 30 轮通过，相关包 Windows
   amd64 测试二进制交叉编译通过；完整本地 `npm run ci` 通过。
 
+修复后的 [Actions run 30234809465](https://github.com/liming0791/agentbell/actions/runs/30234809465)
+已有 12 个 job 通过，只剩 Windows Go runner 暴露两处同源竞争：一次性绑定读取
+inflight 记录时可能遇到 sharing violation，通道事务等待锁时可能遇到短暂
+`ACCESS_DENIED`。最终修复没有放宽数据校验或覆盖率门禁：
+
+- 通道配置锁把 Windows sharing/lock violation 与 `ACCESS_DENIED` 识别为竞争，16 个
+  并发写事务必须串行进入临界区；
+- 一次性绑定按记录使用 tokenized `O_EXCL` 锁，Claim、Commit、Release、Cancel 与
+  过期恢复的完整读写/移动事务均持锁；
+- 新增 stale owner 恢复、live owner 超时不偷锁、successor owner 不被旧 release
+  删除、损坏记录报错和四类状态迁移等待 owner 的行为测试；
+- 关键竞争测试连续 50 轮、binding 全包 race、Windows amd64 测试二进制交叉编译与
+  完整本地 `npm run ci` 通过；`binding` 覆盖率为 80.1%，总覆盖率仍为 79.4%。
+
 交叉编译和本地重复测试仍不等于 Windows 实机产品验收，因此 M2-604 的 Windows 栏
 继续保持待验；M2-603 只在修复后的 PR head Actions 全绿后通过。
 

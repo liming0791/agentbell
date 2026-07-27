@@ -94,10 +94,11 @@ WSL/SSH/container 的精确 argv host-pull、HTTPS push 与用户级 service 调
 proof，HTTPS 本机 outbox 则是单独 worker。Host 配对通过 exact argv + bounded stdio
 完成，不开放 listener，并以 registry 的 team/origin/runtime 校验 child hello；跨主机
 实机证据仍未完成。
-Relay 与 remoteconfig 的跨进程锁使用带随机 owner token 的 `O_EXCL` 文件，释放方只
-删除自己持有的 token。POSIX 状态目录/文件继续收紧为 `0700/0600`；Windows 沿用当前
-用户平台状态根的 DACL，并把 `ACCESS_DENIED`、sharing/lock violation 作为有界重试的
-锁竞争，而不是数据损坏。
+Relay、remoteconfig、通道配置事务和一次性绑定记录的跨进程锁使用带随机 owner token
+的 `O_EXCL` 文件，释放方只删除自己持有的 token。一次性绑定的 Claim、Commit、
+Release、Cancel 和过期恢复共享同一条记录锁，不能并发读取或迁移同一记录。POSIX
+状态目录/文件继续收紧为 `0700/0600`；Windows 沿用当前用户平台状态根的 DACL，并把
+`ACCESS_DENIED`、sharing/lock violation 作为有界重试的锁竞争，而不是数据损坏。
 
 ## 跨平台安装
 

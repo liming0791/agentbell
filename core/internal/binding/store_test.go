@@ -245,6 +245,273 @@ func TestConcurrentClaimHasOneWinner(t *testing.T) {
 	}
 }
 
+func TestBindingLockReleaseDoesNotRemoveAnotherOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "binding.lock")
+	release, err := acquireBindingLock(
+		path,
+		time.Second,
+		time.Millisecond,
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement-owner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	value, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read replacement lock: %v", err)
+	}
+	if string(value) != "replacement-owner" {
+		t.Fatalf("replacement lock changed to %q", value)
+	}
+}
+
+func TestBindingLockRecoversStaleOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "binding.lock")
+	if err := os.WriteFile(path, []byte("stale-owner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	release, err := acquireBindingLock(
+		path,
+		time.Second,
+		time.Millisecond,
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(value) == "stale-owner" {
+		t.Fatal("stale binding lock was not replaced")
+	}
+	release()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("released replacement lock remains: %v", err)
+	}
+}
+
+func TestBindingLockTimesOutWithoutStealingLiveOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "binding.lock")
+	if err := os.WriteFile(path, []byte("live-owner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := acquireBindingLock(
+		path,
+		10*time.Millisecond,
+		time.Millisecond,
+		time.Minute,
+	)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("lock timeout error = %v", err)
+	}
+	value, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(value) != "live-owner" {
+		t.Fatalf("live owner changed to %q", value)
+	}
+}
+
+func TestBindingLockRejectsUncreatablePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "binding.lock")
+	_, err := acquireBindingLock(
+		path,
+		time.Second,
+		time.Millisecond,
+		time.Minute,
+	)
+	if err == nil ||
+		!errors.Is(err, os.ErrNotExist) ||
+		!strings.Contains(err.Error(), "acquire binding lock") {
+		t.Fatalf("uncreatable lock error = %v", err)
+	}
+}
+
+func TestClaimsForDifferentRecordsDoNotShareRecoveryOwnership(t *testing.T) {
+	store := NewStore(t.TempDir())
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	codes := make([]string, 16)
+	for index := range codes {
+		code, _, err := store.Create(
+			"Team "+string(rune('A'+index)),
+			"bot",
+			10*time.Minute,
+			now,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		codes[index] = code
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, len(codes))
+	var wait sync.WaitGroup
+	wait.Add(len(codes))
+	for _, code := range codes {
+		go func() {
+			defer wait.Done()
+			<-start
+			_, err := store.Claim(code, now, time.Minute)
+			results <- err
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRecoverExpiredNoOpAndCorruptRecordError(t *testing.T) {
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	store, code := createBindingForLockTest(t, now)
+	claim, err := store.Claim(code, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(store.Root, "inflight", "README.txt"),
+		[]byte("ignored"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if recovered, err := store.RecoverExpired(now.Add(30 * time.Second)); err != nil ||
+		recovered != 0 {
+		t.Fatalf("active recovery=%d err=%v", recovered, err)
+	}
+	fileName, err := fileNameForHash(claim.CodeHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(store.Root, "inflight", fileName),
+		[]byte("{"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecoverExpired(now.Add(2 * time.Minute)); err == nil ||
+		!strings.Contains(err.Error(), "parse binding record") {
+		t.Fatalf("corrupt recovery error = %v", err)
+	}
+}
+
+func TestBindingStateMutationsWaitForRecordOwner(t *testing.T) {
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	t.Run("commit", func(t *testing.T) {
+		store, code := createBindingForLockTest(t, now)
+		claim, err := store.Claim(code, now, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileName, err := fileNameForHash(claim.CodeHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertBindingMutationWaitsForOwner(t, store, fileName, func() error {
+			return store.Commit(claim, now.Add(time.Second))
+		})
+	})
+	t.Run("release", func(t *testing.T) {
+		store, code := createBindingForLockTest(t, now)
+		claim, err := store.Claim(code, now, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileName, err := fileNameForHash(claim.CodeHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertBindingMutationWaitsForOwner(t, store, fileName, func() error {
+			return store.Release(claim)
+		})
+	})
+	t.Run("cancel", func(t *testing.T) {
+		store, code := createBindingForLockTest(t, now)
+		_, fileName, err := canonicalHash(code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertBindingMutationWaitsForOwner(t, store, fileName, func() error {
+			return store.Cancel(code, now.Add(time.Second))
+		})
+	})
+	t.Run("recover", func(t *testing.T) {
+		store, code := createBindingForLockTest(t, now)
+		claim, err := store.Claim(code, now, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileName, err := fileNameForHash(claim.CodeHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertBindingMutationWaitsForOwner(t, store, fileName, func() error {
+			recovered, err := store.RecoverExpired(now.Add(2 * time.Minute))
+			if err == nil && recovered != 1 {
+				return errors.New("expired claim was not recovered")
+			}
+			return err
+		})
+	})
+}
+
+func createBindingForLockTest(t *testing.T, now time.Time) (*Store, string) {
+	t.Helper()
+	store := NewStore(t.TempDir())
+	code, _, err := store.Create("Team", "bot", 10*time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store, code
+}
+
+func assertBindingMutationWaitsForOwner(
+	t *testing.T,
+	store *Store,
+	fileName string,
+	operation func() error,
+) {
+	t.Helper()
+	release, err := store.acquireRecordLock(fileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		close(started)
+		result <- operation()
+	}()
+	<-started
+	select {
+	case err := <-result:
+		release()
+		t.Fatalf("state mutation bypassed record owner: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	release()
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClaimAndCommitRejectInvalidOrStaleClaims(t *testing.T) {
 	store := NewStore(t.TempDir())
 	entropy := append(
@@ -261,6 +528,13 @@ func TestClaimAndCommitRejectInvalidOrStaleClaims(t *testing.T) {
 	if _, err := store.Claim("AGB-00000-00000-00000-00000", now, 0); err == nil {
 		t.Fatal("zero claim lease succeeded")
 	}
+	if _, err := store.Claim(
+		"AGB-00000-00000-00000-00000",
+		now,
+		time.Minute,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing claim error = %v", err)
+	}
 	if err := store.Commit(Claim{}, now); err == nil {
 		t.Fatal("empty commit succeeded")
 	}
@@ -269,6 +543,9 @@ func TestClaimAndCommitRejectInvalidOrStaleClaims(t *testing.T) {
 	}
 	if err := store.Commit(Claim{CodeHash: "bad", ClaimID: "claim"}, now); err == nil {
 		t.Fatal("invalid hash commit succeeded")
+	}
+	if err := store.Release(Claim{CodeHash: "bad", ClaimID: "claim"}); err == nil {
+		t.Fatal("invalid hash release succeeded")
 	}
 
 	expiredCode, _, err := store.Create("Expired", "bot", 2*time.Minute, now)
@@ -297,6 +574,9 @@ func TestClaimAndCommitRejectInvalidOrStaleClaims(t *testing.T) {
 	}
 	if err := store.Release(claim); err != nil {
 		t.Fatal(err)
+	}
+	if err := store.Release(claim); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("duplicate release error = %v", err)
 	}
 	if err := store.Commit(claim, now); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("released commit error = %v", err)

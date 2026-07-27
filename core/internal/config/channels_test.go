@@ -421,6 +421,52 @@ func TestChannelLockReleaseDoesNotRemoveAnotherOwner(t *testing.T) {
 	nilLock.release()
 }
 
+func TestChannelLockContendersSerialize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	const contenders = 16
+	start := make(chan struct{})
+	results := make(chan error, contenders)
+	entered := make(chan struct{}, 1)
+	var wait sync.WaitGroup
+	wait.Add(contenders)
+	for range contenders {
+		go func() {
+			defer wait.Done()
+			<-start
+			lock, err := acquireChannelLock(
+				context.Background(),
+				path,
+				5*time.Second,
+				time.Millisecond,
+				time.Minute,
+			)
+			if err != nil {
+				results <- err
+				return
+			}
+			select {
+			case entered <- struct{}{}:
+				time.Sleep(time.Millisecond)
+				<-entered
+			default:
+				results <- errors.New("two config lock owners entered together")
+				lock.release()
+				return
+			}
+			lock.release()
+			results <- nil
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestChannelTransactionsReadAndDependencyErrors(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()

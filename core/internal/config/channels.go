@@ -522,7 +522,7 @@ func acquireChannelLock(
 			}
 			return &channelLock{path: path, token: token}, nil
 		}
-		if !errors.Is(openErr, os.ErrExist) {
+		if !isConfigLockContention(openErr) {
 			return nil, fmt.Errorf("acquire config lock: %w", openErr)
 		}
 		if staleAfter > 0 {
@@ -531,8 +531,15 @@ func acquireChannelLock(
 				if removeErr := os.Remove(path); removeErr == nil ||
 					errors.Is(removeErr, os.ErrNotExist) {
 					continue
+				} else if !isConfigLockContention(removeErr) {
+					return nil, fmt.Errorf("remove stale config lock: %w", removeErr)
 				}
-			} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			} else if errors.Is(statErr, os.ErrNotExist) {
+				continue
+			} else if isConfigLockContention(statErr) {
+				// Windows may transiently deny inspection while another
+				// owner publishes or removes the lock.
+			} else if statErr != nil {
 				return nil, fmt.Errorf("inspect config lock: %w", statErr)
 			}
 		}

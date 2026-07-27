@@ -17,10 +17,13 @@ import (
 )
 
 const (
-	recordVersion = 1
-	minimumTTL    = 2 * time.Minute
-	maximumTTL    = 30 * time.Minute
-	codeAlphabet  = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	recordVersion      = 1
+	minimumTTL         = 2 * time.Minute
+	maximumTTL         = 30 * time.Minute
+	bindingLockTimeout = 5 * time.Second
+	bindingLockStale   = 2 * time.Minute
+	bindingLockPoll    = 2 * time.Millisecond
+	codeAlphabet       = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 )
 
 var (
@@ -185,7 +188,12 @@ func (store *Store) Claim(
 	if err := store.ensureDirectories(); err != nil {
 		return Claim{}, err
 	}
-	if _, err := store.RecoverExpired(now); err != nil {
+	release, err := store.acquireRecordLock(fileName)
+	if err != nil {
+		return Claim{}, err
+	}
+	defer release()
+	if _, err := store.recoverExpiredFile(fileName, now); err != nil {
 		return Claim{}, err
 	}
 
@@ -248,6 +256,11 @@ func (store *Store) Commit(claim Claim, now time.Time) error {
 	if err := store.ensureDirectories(); err != nil {
 		return err
 	}
+	release, err := store.acquireRecordLock(fileName)
+	if err != nil {
+		return err
+	}
+	defer release()
 	historyPath := filepath.Join(store.directory("history"), fileName)
 	if _, err := os.Stat(historyPath); err == nil {
 		return ErrConsumed
@@ -292,6 +305,11 @@ func (store *Store) Release(claim Claim) error {
 	if err := store.ensureDirectories(); err != nil {
 		return err
 	}
+	release, err := store.acquireRecordLock(fileName)
+	if err != nil {
+		return err
+	}
+	defer release()
 	inflightPath := filepath.Join(store.directory("inflight"), fileName)
 	record, err := readRecord(inflightPath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -332,37 +350,59 @@ func (store *Store) RecoverExpired(now time.Time) (int, error) {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		inflightPath := filepath.Join(store.directory("inflight"), entry.Name())
-		record, err := readRecord(inflightPath)
+		release, err := store.acquireRecordLock(entry.Name())
 		if err != nil {
 			return recovered, err
 		}
-		if record.LeaseUntil.IsZero() || record.LeaseUntil.After(now.UTC()) {
-			continue
+		didRecover, recoverErr := store.recoverExpiredFile(entry.Name(), now)
+		release()
+		if recoverErr != nil {
+			return recovered, recoverErr
 		}
-		historyPath := filepath.Join(store.directory("history"), entry.Name())
-		if _, err := os.Stat(historyPath); err == nil {
-			if removeErr := os.Remove(inflightPath); removeErr != nil &&
-				!errors.Is(removeErr, os.ErrNotExist) {
-				return recovered, removeErr
-			}
-			continue
+		if didRecover {
+			recovered++
 		}
-		clearClaim(&record)
-		if err := writeRecordAtomic(inflightPath, record); err != nil {
-			return recovered, err
-		}
-		pendingPath := filepath.Join(store.directory("pending"), entry.Name())
-		if err := os.Rename(inflightPath, pendingPath); err != nil {
-			if errors.Is(err, os.ErrExist) {
-				_ = os.Remove(inflightPath)
-				continue
-			}
-			return recovered, err
-		}
-		recovered++
 	}
 	return recovered, nil
+}
+
+// recoverExpiredFile inspects and transitions one record. The caller must own
+// that record's lock for the full read/write/move sequence.
+func (store *Store) recoverExpiredFile(fileName string, now time.Time) (bool, error) {
+	inflightPath := filepath.Join(store.directory("inflight"), fileName)
+	record, err := readRecord(inflightPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if record.LeaseUntil.IsZero() || record.LeaseUntil.After(now.UTC()) {
+		return false, nil
+	}
+	historyPath := filepath.Join(store.directory("history"), fileName)
+	if _, err := os.Stat(historyPath); err == nil {
+		if removeErr := os.Remove(inflightPath); removeErr != nil &&
+			!errors.Is(removeErr, os.ErrNotExist) {
+			return false, removeErr
+		}
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	clearClaim(&record)
+	if err := writeRecordAtomic(inflightPath, record); err != nil {
+		return false, err
+	}
+	pendingPath := filepath.Join(store.directory("pending"), fileName)
+	if err := os.Rename(inflightPath, pendingPath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			_ = os.Remove(inflightPath)
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (store *Store) Cancel(code string, now time.Time) error {
@@ -376,6 +416,11 @@ func (store *Store) Cancel(code string, now time.Time) error {
 	if err := store.ensureDirectories(); err != nil {
 		return err
 	}
+	release, err := store.acquireRecordLock(fileName)
+	if err != nil {
+		return err
+	}
+	defer release()
 	historyPath := filepath.Join(store.directory("history"), fileName)
 	if history, readErr := readRecord(historyPath); readErr == nil {
 		if !history.CancelledAt.IsZero() {
@@ -484,6 +529,13 @@ func (store *Store) ensureDirectories() error {
 
 func (store *Store) directory(name string) string {
 	return filepath.Join(store.Root, name)
+}
+
+func (store *Store) acquireRecordLock(fileName string) (func(), error) {
+	return acquireBindingLock(filepath.Join(
+		store.directory("tmp"),
+		fileName+".lock",
+	), bindingLockTimeout, bindingLockPoll, bindingLockStale)
 }
 
 func (store *Store) newCode() (string, error) {
@@ -699,4 +751,79 @@ func writeRecordAtomic(path string, record Record) error {
 		return err
 	}
 	return os.Rename(temporary, path)
+}
+
+func acquireBindingLock(
+	path string,
+	timeout time.Duration,
+	poll time.Duration,
+	staleAfter time.Duration,
+) (func(), error) {
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, err
+	}
+	token := hex.EncodeToString(tokenBytes)
+	deadline := time.Now().Add(timeout)
+	for {
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			if chmodErr := setBindingLockPermissions(file); chmodErr != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return nil, chmodErr
+			}
+			if _, writeErr := file.WriteString(token); writeErr != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return nil, writeErr
+			}
+			if syncErr := file.Sync(); syncErr != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return nil, syncErr
+			}
+			if closeErr := file.Close(); closeErr != nil {
+				_ = os.Remove(path)
+				return nil, closeErr
+			}
+			return ownedBindingLockRelease(path, token), nil
+		}
+		if !isBindingLockContention(err) {
+			return nil, fmt.Errorf("acquire binding lock: %w", err)
+		}
+
+		info, statErr := os.Stat(path)
+		switch {
+		case errors.Is(statErr, os.ErrNotExist):
+			continue
+		case isBindingLockContention(statErr):
+			// Windows may transiently deny inspection while another owner
+			// publishes or removes the lock.
+		case statErr != nil:
+			return nil, fmt.Errorf("inspect binding lock: %w", statErr)
+		case staleAfter > 0 && time.Since(info.ModTime()) > staleAfter:
+			removeErr := os.Remove(path)
+			if removeErr == nil || errors.Is(removeErr, os.ErrNotExist) {
+				continue
+			}
+			if !isBindingLockContention(removeErr) {
+				return nil, fmt.Errorf("remove stale binding lock: %w", removeErr)
+			}
+		}
+		if timeout > 0 && !time.Now().Before(deadline) {
+			return nil, errors.New("timed out waiting for binding lock")
+		}
+		time.Sleep(poll)
+	}
+}
+
+func ownedBindingLockRelease(path, token string) func() {
+	return func() {
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != token {
+			return
+		}
+		_ = os.Remove(path)
+	}
 }
