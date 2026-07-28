@@ -160,12 +160,13 @@ test("release reruns cannot mutate a public release or finalize without a draft"
 
 test("draft lifecycle CI uses two real Release boundaries without publishing", async () => {
   const workflow = await readFile(
-    path.join(root, ".github", "workflows", "draft-release-lifecycle.yml"),
+    path.join(root, ".github", "workflows", "release.yml"),
     "utf8"
   );
   for (const required of [
-    "name: Draft Release Lifecycle",
-    "workflow_dispatch:",
+    "draft-lifecycle:",
+    "- lifecycle",
+    "inputs.action == 'lifecycle'",
     "gh release view \"$PREVIOUS_TAG\"",
     "gh release download \"$PREVIOUS_TAG\"",
     "gh release download \"$CURRENT_TAG\"",
@@ -178,10 +179,14 @@ test("draft lifecycle CI uses two real Release boundaries without publishing", a
   ]) {
     assert.ok(workflow.includes(required), `missing lifecycle proof: ${required}`);
   }
+  const lifecycleJob = workflow.slice(
+    workflow.indexOf("draft-lifecycle:"),
+    workflow.indexOf("finalize-release:")
+  );
   assert.ok(
-    !workflow.includes("npm publish") &&
-      !workflow.includes("--draft=false") &&
-      !workflow.includes("contents: write"),
+    !lifecycleJob.includes("npm publish") &&
+      !lifecycleJob.includes("--draft=false") &&
+      !lifecycleJob.includes("contents: write"),
     "the lifecycle proof must not publish or mutate either Release"
   );
 });
