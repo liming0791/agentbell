@@ -1,4 +1,4 @@
-# AgentBell M1 切片 1 验收记录：setup 本机安装闭环
+# AgentBell M1 验收记录
 
 验收目标：`agentbell setup` / `agentbell test` 在 macOS 本机完成真实飞书闭环。
 验收日期：2026-07-25；环境：macOS 26.4 arm64、Go 1.26.5、Node.js 22.22、lark-cli 1.0.30、
@@ -16,10 +16,10 @@ Codex/Claude Code/Kimi Code Go Adapter、三平台登录服务和产品级统一
 
 ## 自动门禁
 
-- `npm run ci` 全绿（lint、结构检查、Node 覆盖率、Go 覆盖率、pack 预检），2026-07-25
-  最终工作树执行 exit 0。
-- Go 覆盖率：总 79.4%（门禁 75%）；`event` 95.8%、`queue` 83.3%、
-  `adapter` 83.0%、`setup` 83.2%（四个包门禁各 80%）。
+- `npm run ci` 全绿（lint、75 项结构检查、Node 覆盖率、Go 覆盖率、pack 预检），
+  2026-07-26 M1 收尾工作树执行 exit 0。
+- Go 覆盖率：总 79.2%（门禁 75%）；`event` 95.2%、`queue` 83.3%、
+  `adapter` 81.1%、`setup` 83.9%（四个包门禁各 80%）。
 - 新增测试：`config.Save` 写盘/校验/幂等；setup 全流程 fake Runner/Prompter 分支
   （含 dry-run 零副作用、已有配置合并备份、bot 建群邀请用户、损坏配置拒绝覆盖）；
   app 层 setup/test 命令用例；Node 侧 bootstrap 代理与平台路径用例。
@@ -89,22 +89,24 @@ Codex/Claude Code/Kimi Code Go Adapter、三平台登录服务和产品级统一
   proof 取代。
 - 隔离队列用同一 Kimi session 连续注入两次 Stop，得到两个不同 idempotency key 和
   两条 pending 事件，证明后续回合不再被永久折叠。
-- Kimi Code 仍需在修复部署后启动新会话并完成一轮真实事件，才能补齐
-  `diagnose kimi-code` 的 runtime proof；不得用旧会话结果冒充通过。
+- Kimi Code 在修复部署后的新会话中已完成真实 Stop 投递并补齐
+  `diagnose kimi-code` runtime proof；旧会话结果不计入该结论。
 
 ## M1 Adapter 与跨平台服务补齐
 
-- Claude Code Go Adapter 结构化合并用户级 `settings.json`，使用绝对 Core 路径和
-  exec-form 参数数组，覆盖 Stop/StopFailure/Notification/PermissionRequest；安装、
-  重复安装、静态验证、runtime proof、精确卸载和三平台路径 fixture 已自动化。
+- Claude Code Go Adapter 结构化合并用户级 `settings.json`；安装、重复安装、静态
+  验证、runtime proof、精确卸载和三平台路径 fixture 已自动化。M1 当时按四事件
+  exec-form 实现，M2 实机发现旧版本会因未知事件丢弃整组 Hook，当前实现已改为按检测
+  版本协商事件集与 shell/exec-form 命令形态；以 [兼容矩阵](./compatibility.md) 和
+  [运维文档](./operations.md#安装-claude-code-adapter) 为准。
 - 官方资料确认 Claude Code CLI 与 Desktop Code tab 本地会话共享用户级 settings 与
   Hooks；实现因此复用一个 Adapter。Desktop 云会话不计入本机支持范围。
 - Codex Adapter 在无 CLI PATH、但存在共享 `CODEX_HOME` 时也能检测 Desktop 安装；
   CLI 与 Desktop 继续共用 `hooks.json` 和 `/hooks` 哈希信任边界。
 - `service install/status/uninstall` 新增 Windows 当前用户 ONLOGON 计划任务，以及
   Linux systemd user；无法连接 systemd user manager 时回退 XDG Autostart。
-- `agentbell adapter uninstall all` 先预检再精确卸载 Codex、Claude Code、Kimi Code
-  Hook，保留其他用户配置。
+- `agentbell adapter uninstall all` 先预检再精确卸载 Codex、Claude Code、Kimi Code、
+  OpenCode、Qoder Hook，保留其他用户配置。
 - `agentbell uninstall` 在同一预检流程中再停止并删除平台登录服务，默认保留配置、
   队列与诊断数据；npm bootstrap 等 Core 退出后仅删除受管的当前版本目录。
 - 上述 Windows/Linux 与 Claude Desktop 结论当前来自官方协议、自动 fixture 和跨目标
@@ -135,9 +137,50 @@ Codex/Claude Code/Kimi Code Go Adapter、三平台登录服务和产品级统一
   为空；实际 hooks.json 中 AgentBell Stop 为 1、AgentBell PermissionRequest 为 0，
   cmux 的 Stop/PermissionRequest 均保留。
 
+## OpenCode 实机 / Qoder 配置闭环验收
+
+- 验收日期：2026-07-26；环境：macOS 26.4 arm64、Go 1.26.5、OpenCode 已安装
+  （`~/.opencode/bin/opencode`）、Qoder 未安装（以 `~/.qoder` 模拟配置目录验收）。
+- OpenCode：detect 正确识别 CLI 与配置目录；install 写入
+  `~/.config/opencode/plugins/agentbell.js`；verify 通过；已有用户插件（cmux）不受
+  影响；重复 install 幂等；emit `session.idle` 经插件 spawn 入队，diagnose
+  `runtimeVerified: true`；uninstall 精确删除 agentbell.js，cmux 完好。
+- Qoder：detect 通过 `$QODER_CONFIG_DIR` 识别；install 结构化合并
+  `settings.json`，用户已有 `model`/`permissions` 完好保留；verify 通过；重复
+  install 幂等；emit `Stop` 经 exec-form 命令入队，diagnose `runtimeVerified: true`；
+  uninstall 后 `model`/`permissions` 零丢失。
+- 验收中发现并修复 event.go bug：`rawEvent` 缺少 `type` 字段，OpenCode 的
+  `{"type":"session.idle"}` 被错误映射为 `agent.info`。修复后 `session.idle`
+  正确映射为 `task.completed`。
+- Fail-open：OpenCode 插件 spawn error handler 保证 Core 缺失不阻塞；Qoder Hook
+  5s timeout 保证超时不阻塞。
+
 ## 发布边界
 
 - 本切片仅为本地 dev 构建验证；版本号未 bump，未走 Release 流水线。
-- setup/test 在 Windows、Linux 尚未实机验证。
-- macOS/Windows/Linux 登录自启动代码已实现；Windows/Linux 实机登录重启仍待验。
+- setup/test 在 Windows、Linux 未纳入 M1 实机验收，后续按需补验。
+- macOS/Windows/Linux 登录自启动代码已实现；Windows/Linux 登录重启未纳入 M1
+  实机验收，后续按需补验。
 - npm `setup --plan` 保持只读计划行为；真实执行由 Core 提供。
+
+## M1 收尾决策
+
+- 决策日期：2026-07-26。
+- Windows/Linux 产品实机矩阵与服务登录重启验收经决策跳过，M1 阶段通过。
+- 五个产品 Adapter 均保持 Pilot 等级；Windows/Linux 实机验证延后至 M2 或按需补验。
+
+## 五个现有 Adapter 的 IDE 待测试矩阵
+
+以下项目只记录实机验收，不创建 M1.5 开发任务；测试发现协议或配置不复用时，再单独
+评审是否需要开发。
+
+| Adapter | IDE Surface | 当前复用依据 | 待测试重点 |
+| --- | --- | --- | --- |
+| Codex | Codex IDE extension | 与 CLI/Desktop 共享 Codex 配置层 | 用户级 Hook 加载、信任后新任务的 `Stop` runtime proof；不测试 IDE 内插件安装 |
+| Claude Code | VS Code、JetBrains | VS Code 与 CLI 共享 `~/.claude/settings.json`；JetBrains 启动同一 CLI | 完成、失败、人工审批、settings 热加载和 GUI PATH |
+| OpenCode | VS Code、Cursor、Windsurf、VSCodium | IDE 扩展启动终端中的 OpenCode | 全局 `agentbell.js` 启动加载、`session.idle`、`session.error` 和 GUI PATH |
+| Kimi Code | VS Code、Zed/JetBrains ACP | IDE/ACP 由 Kimi Code CLI 驱动，但 Hook 复用尚无完整实机证据 | TS/Python CLI 版本门槛、ACP 下 Stop/失败/审批、绝对路径和新会话加载 |
+| Qoder | Qoder IDE、JetBrains | 官方明确与 CLI 共用 `~/.qoder/settings.json` | 重启后 Stop/失败 runtime proof、已有 Hook 保留和 GUI PATH |
+
+所有项目只覆盖本地执行面。SSH、容器和厂商云任务必须在实际运行位置另行安装或等待公开
+回调，不能用本机 IDE 测试结果替代。

@@ -18,11 +18,13 @@ const codexAdapterID = "codex"
 const codexHooksDescription = "Lifecycle hooks including AgentBell notifications."
 
 type CodexAdapter struct {
-	Executable string
-	StateDir   string
-	CodexHome  string
-	Now        func() time.Time
-	LookPath   func(string) (string, error)
+	Executable       string
+	BridgeExecutable string
+	ActiveGeneration uint64
+	StateDir         string
+	CodexHome        string
+	Now              func() time.Time
+	LookPath         func(string) (string, error)
 }
 
 type AdapterPlan struct {
@@ -46,13 +48,15 @@ type AdapterResult struct {
 }
 
 type codexReceipt struct {
-	Version        int       `json:"version"`
-	Adapter        string    `json:"adapter"`
-	HookPath       string    `json:"hookPath"`
-	Command        string    `json:"command"`
-	CommandWindows string    `json:"commandWindows"`
-	Backup         string    `json:"backup,omitempty"`
-	InstalledAt    time.Time `json:"installedAt"`
+	Version              int       `json:"version"`
+	Adapter              string    `json:"adapter"`
+	HookPath             string    `json:"hookPath"`
+	Command              string    `json:"command"`
+	CommandWindows       string    `json:"commandWindows"`
+	Backup               string    `json:"backup,omitempty"`
+	InstalledAt          time.Time `json:"installedAt"`
+	BridgeProtocol       int       `json:"bridgeProtocol,omitempty"`
+	ActivationGeneration uint64    `json:"activationGeneration,omitempty"`
 }
 
 func NewCodexAdapter(executable, stateDir string) (*CodexAdapter, error) {
@@ -97,7 +101,7 @@ func (adapter *CodexAdapter) Plan() AdapterPlan {
 		Adapter:    codexAdapterID,
 		Detected:   adapter.Detect(),
 		HookPath:   adapter.hookPath(),
-		Executable: adapter.Executable,
+		Executable: plannedHookExecutable(adapter.Executable, adapter.BridgeExecutable),
 		Changes: []string{
 			"merge AgentBell command hook into Stop",
 			"remove legacy ambiguous PermissionRequest notification hook",
@@ -118,10 +122,25 @@ func (adapter *CodexAdapter) Install(dryRun bool) (AdapterResult, error) {
 	if err != nil {
 		return result, err
 	}
+	receipt, receiptErr := adapter.readReceipt()
+	migrated := false
+	if adapter.BridgeExecutable != "" &&
+		receiptErr == nil &&
+		(receipt.Command != command || receipt.CommandWindows != commandWindows) {
+		migrated, err = removeCodexHooks(
+			root,
+			receipt.Command,
+			receipt.CommandWindows,
+		)
+		if err != nil {
+			return result, err
+		}
+	}
 	changed, err := mergeCodexHooks(root, command, commandWindows)
 	if err != nil {
 		return result, err
 	}
+	changed = changed || migrated
 	result.Installed = true
 	result.Changed = changed
 	if dryRun {
@@ -146,14 +165,20 @@ func (adapter *CodexAdapter) Install(dryRun bool) (AdapterResult, error) {
 	if err := writeJSONObject(adapter.hookPath(), root); err != nil {
 		return result, err
 	}
-	receipt := codexReceipt{
-		Version:        1,
-		Adapter:        codexAdapterID,
-		HookPath:       adapter.hookPath(),
-		Command:        command,
-		CommandWindows: commandWindows,
-		Backup:         backup,
-		InstalledAt:    adapter.now().UTC(),
+	invocation, err := adapter.hookInvocation()
+	if err != nil {
+		return result, err
+	}
+	receipt = codexReceipt{
+		Version:              receiptVersion(invocation),
+		Adapter:              codexAdapterID,
+		HookPath:             adapter.hookPath(),
+		Command:              command,
+		CommandWindows:       commandWindows,
+		Backup:               backup,
+		InstalledAt:          adapter.now().UTC(),
+		BridgeProtocol:       invocation.BridgeProtocol,
+		ActivationGeneration: invocation.ActivationGeneration,
 	}
 	if err := adapter.writeReceipt(receipt); err != nil {
 		return result, err
@@ -247,12 +272,29 @@ func (adapter *CodexAdapter) Diagnose() AdapterResult {
 		result.Message = err.Error()
 		return result
 	}
-	proof, verified := runtimeEventProofAfterConfig(
-		adapter.StateDir,
-		codexAdapterID,
-		"task.completed",
-		adapter.hookPath(),
-	)
+	receipt, receiptErr := adapter.readReceipt()
+	var proof runtimeProof
+	var verified bool
+	if receiptErr == nil && bridgeReceiptActive(
+		receipt.Version,
+		receipt.BridgeProtocol,
+		receipt.ActivationGeneration,
+	) {
+		proof, verified = runtimeEventProofAfterConfigAndGeneration(
+			adapter.StateDir,
+			codexAdapterID,
+			"task.completed",
+			adapter.hookPath(),
+			adapter.ActiveGeneration,
+		)
+	} else {
+		proof, verified = runtimeEventProofAfterConfig(
+			adapter.StateDir,
+			codexAdapterID,
+			"task.completed",
+			adapter.hookPath(),
+		)
+	}
 	result.RuntimeVerified = verified
 	if !proof.LastSeen.IsZero() {
 		result.LastSeen = proof.LastSeen.Format(time.RFC3339Nano)
@@ -270,16 +312,22 @@ func (adapter *CodexAdapter) hookPath() string {
 }
 
 func (adapter *CodexAdapter) commands() (string, string, error) {
-	if strings.Contains(adapter.Executable, "\x00") ||
-		strings.Contains(adapter.Executable, "\n") ||
-		strings.Contains(adapter.Executable, "\r") ||
-		strings.Contains(adapter.Executable, `"`) {
-		return "", "", errors.New("AgentBell executable path contains unsupported characters")
+	invocation, err := adapter.hookInvocation()
+	if err != nil {
+		return "", "", err
 	}
-	arguments := " emit --adapter codex --surface cli --runtime host --stdin --fail-open"
-	return shellQuote(adapter.Executable) + arguments,
-		`"` + adapter.Executable + `"` + arguments,
-		nil
+	return invocation.shellCommand(false), invocation.shellCommand(true), nil
+}
+
+func (adapter *CodexAdapter) hookInvocation() (hookInvocation, error) {
+	return resolveHookInvocation(
+		adapter.Executable,
+		adapter.BridgeExecutable,
+		adapter.ActiveGeneration,
+		codexAdapterID,
+		"cli",
+		"host",
+	)
 }
 
 func (adapter *CodexAdapter) backup(source string) (string, error) {
@@ -320,7 +368,12 @@ func (adapter *CodexAdapter) readReceipt() (codexReceipt, error) {
 	if err := json.Unmarshal(value, &receipt); err != nil {
 		return codexReceipt{}, err
 	}
-	if receipt.Version != 1 || receipt.Adapter != codexAdapterID {
+	if receipt.Adapter != codexAdapterID ||
+		validateReceiptBridge(
+			receipt.Version,
+			receipt.BridgeProtocol,
+			receipt.ActivationGeneration,
+		) != nil {
 		return codexReceipt{}, errors.New("invalid Codex adapter receipt")
 	}
 	return receipt, nil

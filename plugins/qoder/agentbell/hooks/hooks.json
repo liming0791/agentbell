@@ -1,0 +1,35 @@
+{
+  "description": "Forward Qoder completion and tool-failure events to AgentBell.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${QODER_PLUGIN_ROOT}/scripts/hook.mjs",
+              "qoder"
+            ],
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${QODER_PLUGIN_ROOT}/scripts/hook.mjs",
+              "qoder"
+            ],
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

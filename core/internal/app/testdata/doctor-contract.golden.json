@@ -1,0 +1,91 @@
+{
+  "adapters": {
+    "item": {
+      "adapter": "string",
+      "detected": "boolean",
+      "installed": "boolean",
+      "lastSeen": "string",
+      "runtimeVerified": "boolean",
+      "status": "string"
+    },
+    "length": 7,
+    "type": "array"
+  },
+  "architecture": "string",
+  "config": {
+    "channelCount": "number",
+    "configured": "boolean",
+    "errorCode": "string",
+    "healthy": "boolean",
+    "status": "string"
+  },
+  "healthy": "boolean",
+  "install": {
+    "activeVersion": "string",
+    "checksumStatus": "string",
+    "configured": "boolean",
+    "errorCode": "string",
+    "generation": "number",
+    "healthy": "boolean",
+    "mode": "string",
+    "previousVersion": "string",
+    "signatureStatus": "string",
+    "stableBridgeStatus": "string",
+    "target": "string"
+  },
+  "larkCli": {
+    "configured": "boolean",
+    "errorCode": "string",
+    "healthy": "boolean",
+    "status": "string"
+  },
+  "platform": "string",
+  "plugin": {
+    "capability": "string",
+    "requiredSignatureStatus": "string",
+    "verificationAvailable": "boolean"
+  },
+  "queue": {
+    "dead": "number",
+    "errorCode": "string",
+    "healthy": "boolean",
+    "history": "number",
+    "inflight": "number",
+    "pending": "number"
+  },
+  "relay": {
+    "configured": "boolean",
+    "connectorCount": "number",
+    "connectorCounts": {},
+    "errorCode": "string",
+    "healthy": "boolean",
+    "runtimeProofs": {
+      "length": 0,
+      "type": "array"
+    }
+  },
+  "schemaVersion": "number",
+  "secretStore": {
+    "available": "boolean",
+    "backend": "string",
+    "fileFallbackAvailable": "boolean",
+    "requiresExplicitAcknowledgement": "boolean",
+    "status": "string"
+  },
+  "settings": {
+    "configured": "boolean",
+    "errorCode": "string",
+    "healthy": "boolean",
+    "minCoreVersion": "string",
+    "status": "string",
+    "version": "number"
+  },
+  "version": {
+    "arch": "string",
+    "buildTime": "string",
+    "commit": "string",
+    "goVersion": "string",
+    "platform": "string",
+    "version": "string"
+  }
+}

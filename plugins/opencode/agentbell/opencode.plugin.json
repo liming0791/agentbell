@@ -1,0 +1,14 @@
+{
+  "name": "agentbell",
+  "version": "0.3.0-rc.4",
+  "description": "Send OpenCode lifecycle notifications to Feishu through AgentBell and lark-cli.",
+  "keywords": [
+    "notifications",
+    "hooks",
+    "feishu",
+    "lark"
+  ],
+  "author": "AgentBell contributors",
+  "license": "MIT",
+  "skills": "./skills/"
+}

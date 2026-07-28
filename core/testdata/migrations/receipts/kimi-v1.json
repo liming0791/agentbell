@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "adapter": "kimi-code",
+  "hookPath": "/fixture/kimi/config.toml",
+  "command": "'/fixture/agentbell-v1' emit --adapter kimi-code --surface cli --runtime host --stdin --fail-open",
+  "installedAt": "2026-01-02T03:04:05Z"
+}

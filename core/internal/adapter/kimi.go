@@ -28,20 +28,24 @@ var (
 )
 
 type KimiAdapter struct {
-	Executable string
-	StateDir   string
-	KimiHome   string
-	Now        func() time.Time
-	LookPath   func(string) (string, error)
+	Executable       string
+	BridgeExecutable string
+	ActiveGeneration uint64
+	StateDir         string
+	KimiHome         string
+	Now              func() time.Time
+	LookPath         func(string) (string, error)
 }
 
 type kimiReceipt struct {
-	Version     int       `json:"version"`
-	Adapter     string    `json:"adapter"`
-	HookPath    string    `json:"hookPath"`
-	Command     string    `json:"command"`
-	Backup      string    `json:"backup,omitempty"`
-	InstalledAt time.Time `json:"installedAt"`
+	Version              int       `json:"version"`
+	Adapter              string    `json:"adapter"`
+	HookPath             string    `json:"hookPath"`
+	Command              string    `json:"command"`
+	Backup               string    `json:"backup,omitempty"`
+	InstalledAt          time.Time `json:"installedAt"`
+	BridgeProtocol       int       `json:"bridgeProtocol,omitempty"`
+	ActivationGeneration uint64    `json:"activationGeneration,omitempty"`
 }
 
 func NewKimiAdapter(executable, stateDir string) (*KimiAdapter, error) {
@@ -86,7 +90,7 @@ func (adapter *KimiAdapter) Plan() AdapterPlan {
 		Adapter:    kimiAdapterID,
 		Detected:   adapter.Detect(),
 		HookPath:   adapter.configPath(),
-		Executable: adapter.Executable,
+		Executable: plannedHookExecutable(adapter.Executable, adapter.BridgeExecutable),
 		Changes: []string{
 			"append AgentBell [[hooks]] entries for Stop, StopFailure and PermissionRequest",
 			"write an ownership receipt for precise uninstall",
@@ -134,13 +138,19 @@ func (adapter *KimiAdapter) Install(dryRun bool) (AdapterResult, error) {
 	if err := writeFileAtomic(adapter.configPath(), []byte(updated)); err != nil {
 		return result, err
 	}
+	invocation, err := adapter.hookInvocation()
+	if err != nil {
+		return result, err
+	}
 	receipt := kimiReceipt{
-		Version:     1,
-		Adapter:     kimiAdapterID,
-		HookPath:    adapter.configPath(),
-		Command:     command,
-		Backup:      backup,
-		InstalledAt: adapter.now().UTC(),
+		Version:              receiptVersion(invocation),
+		Adapter:              kimiAdapterID,
+		HookPath:             adapter.configPath(),
+		Command:              command,
+		Backup:               backup,
+		InstalledAt:          adapter.now().UTC(),
+		BridgeProtocol:       invocation.BridgeProtocol,
+		ActivationGeneration: invocation.ActivationGeneration,
 	}
 	if err := adapter.writeReceipt(receipt); err != nil {
 		return result, err
@@ -239,7 +249,27 @@ func (adapter *KimiAdapter) Diagnose() AdapterResult {
 		result.Message = err.Error()
 		return result
 	}
-	proof, verified := runtimeProofAfterConfig(adapter.StateDir, kimiAdapterID, adapter.configPath())
+	receipt, receiptErr := adapter.readReceipt()
+	var proof runtimeProof
+	var verified bool
+	if receiptErr == nil && bridgeReceiptActive(
+		receipt.Version,
+		receipt.BridgeProtocol,
+		receipt.ActivationGeneration,
+	) {
+		proof, verified = runtimeProofAfterConfigAndGeneration(
+			adapter.StateDir,
+			kimiAdapterID,
+			adapter.configPath(),
+			adapter.ActiveGeneration,
+		)
+	} else {
+		proof, verified = runtimeProofAfterConfig(
+			adapter.StateDir,
+			kimiAdapterID,
+			adapter.configPath(),
+		)
+	}
 	result.RuntimeVerified = verified
 	if !proof.LastSeen.IsZero() {
 		result.LastSeen = proof.LastSeen.Format(time.RFC3339Nano)
@@ -257,11 +287,22 @@ func (adapter *KimiAdapter) configPath() string {
 }
 
 func (adapter *KimiAdapter) command() (string, error) {
-	if strings.ContainsAny(adapter.Executable, "\"\n\r\x00") {
-		return "", errors.New("AgentBell executable path contains unsupported characters")
+	invocation, err := adapter.hookInvocation()
+	if err != nil {
+		return "", err
 	}
-	return shellQuote(adapter.Executable) +
-		" emit --adapter kimi-code --surface cli --runtime host --stdin --fail-open", nil
+	return invocation.shellCommand(false), nil
+}
+
+func (adapter *KimiAdapter) hookInvocation() (hookInvocation, error) {
+	return resolveHookInvocation(
+		adapter.Executable,
+		adapter.BridgeExecutable,
+		adapter.ActiveGeneration,
+		kimiAdapterID,
+		"cli",
+		"host",
+	)
 }
 
 func (adapter *KimiAdapter) backup(source string) (string, error) {
@@ -302,7 +343,12 @@ func (adapter *KimiAdapter) readReceipt() (kimiReceipt, error) {
 	if err := json.Unmarshal(value, &receipt); err != nil {
 		return kimiReceipt{}, err
 	}
-	if receipt.Version != 1 || receipt.Adapter != kimiAdapterID {
+	if receipt.Adapter != kimiAdapterID ||
+		validateReceiptBridge(
+			receipt.Version,
+			receipt.BridgeProtocol,
+			receipt.ActivationGeneration,
+		) != nil {
 		return kimiReceipt{}, errors.New("invalid Kimi Code adapter receipt")
 	}
 	return receipt, nil

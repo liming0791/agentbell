@@ -11,6 +11,12 @@ func TestEmbeddedCatalog(t *testing.T) {
 	if !ok || manifest.SupportLevel != "pilot" {
 		t.Fatalf("codex manifest missing: %#v", manifest)
 	}
+	for _, id := range []string{"qoder-work", "trae"} {
+		manifest, ok := catalog.Find(id)
+		if !ok || !manifest.Phase1 || manifest.SupportLevel != "pilot" {
+			t.Fatalf("%s M1.5 manifest missing: %#v", id, manifest)
+		}
+	}
 }
 
 func TestCatalogRejectsInvalidCombinations(t *testing.T) {

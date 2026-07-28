@@ -17,7 +17,9 @@ const manifestPaths = [
   "packages/hook-runtime/package.json",
   "plugins/codex/agentbell/.codex-plugin/plugin.json",
   "plugins/claude/agentbell/.claude-plugin/plugin.json",
-  "plugins/kimi/agentbell/kimi.plugin.json"
+  "plugins/kimi/agentbell/kimi.plugin.json",
+  "plugins/opencode/agentbell/opencode.plugin.json",
+  "plugins/qoder/agentbell/.qoder-plugin/plugin.json"
 ];
 
 async function readJson(relativePath) {

@@ -44,12 +44,18 @@ Adapter 负责把一个 Agent 产品的公开扩展入口转成 AgentBell 的统
 | --- | --- |
 | `codex-json-hooks` | Codex CLI/Desktop |
 | `claude-json-hooks` | Claude Code、Qoder，以及验证兼容后的产品 |
+| `qoderwork-json-hooks` | QoderWork shell-command JSON Hook |
 | `kimi-plugin-hooks` | Kimi Code |
 | `opencode-plugin-events` | OpenCode |
-| `vendor-plugin-pilot` | ZCode、WorkBuddy、TRAE 的验证期适配 |
+| `trae-json-hooks` | TRAE IDE |
+| `vendor-plugin-pilot` | ZCode、WorkBuddy 等尚未公开完整协议的验证期候选 |
 | `assisted-mcp-skill` | 为将来明确批准的软触发集成预留；Kimi Work 当前不使用 |
 
-Dialect 只描述事件协议；路径、变量名、插件根目录和配置优先级仍由产品 profile 定义。
+Dialect 只描述事件协议和命令形态；路径、变量名、插件根目录和配置优先级仍由产品
+profile 定义。Qoder 使用 exec-form `command + args`，QoderWork 使用单个 shell
+command，因此两者既不能共享 Adapter profile，也不能声明同一 dialect；前者写
+`~/.qoder/settings.json`，后者按产品区域写国际版 `~/.qoderwork/settings.json` 或
+CN 版 `~/.qoderworkcn/settings.json`。
 
 没有公开确定性生命周期 Hook 的产品不得仅因为存在 Skill、MCP 或提示词入口就生成 Adapter。此类产品默认进入 Waiting，直到单独完成产品决策和风险评估。
 
@@ -60,12 +66,16 @@ Dialect 只描述事件协议；路径、变量名、插件根目录和配置优
 | Stop / session.idle / response ready | `task.completed` |
 | StopFailure / session.error | `task.failed` |
 | PermissionRequest / permission.asked | `approval.required` |
-| Notification idle_prompt / agent_needs_input | `agent.waiting` |
+| TRAE Notification idle_prompt | `task.completed` |
+| TRAE Notification permission_prompt | `approval.required` |
+| Notification agent_needs_input | `agent.waiting` |
 | Interrupt | `session.interrupted` |
 | SubagentStop | `subagent.completed` |
 
 不能确认语义时映射到 `agent.info`，不得猜成任务完成。原始 Hook 输入只在规范化进程内
-使用，默认不持久化。
+使用，默认不持久化。`Notification` 必须由产品 Adapter 明确解释；TRAE 官方定义
+`idle_prompt` 为当前任务已完成，因此 TRAE Adapter 可映射为 `task.completed`，其他产品
+不得仅凭同名通知沿用该映射。
 
 映射表描述协议语义，不代表每个产品都能无条件发出该通知。若产品事件发生在路由决策
 之前，且载荷不能证明最终需要用户操作，Adapter 必须抑制而不是误报。Codex 当前的
@@ -97,6 +107,14 @@ agentbell emit \
 ```
 
 Adapter 可以通过 stdin 传原始 JSON/TOML 事件。AgentBell 对原始内容设置大小上限，默认不持久化完整 transcript。
+
+事件名称字段按以下优先级解析（取第一个非空值）：
+
+1. `hook_event_name` — Claude Code、Codex、Qoder、QoderWork、TRAE 等 JSON hooks 产品使用；
+2. `event` — 部分产品的通用事件字段；
+3. `type` — OpenCode 等插件事件系统使用（如 `{"type":"session.idle"}`）。
+
+三个字段均为可选字符串，Core 按上述顺序 fallback。Adapter 实现无需关心具体字段名，只需透传原始 JSON。
 
 ## 验收门槛
 

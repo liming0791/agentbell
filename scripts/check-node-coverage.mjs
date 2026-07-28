@@ -20,16 +20,27 @@ if (result.status !== 0) {
   throw new Error(`Node.js tests failed with exit code ${result.status}.`);
 }
 
-const coreLine = (result.stdout || "")
-  .split(/\r?\n/)
-  .find((line) => /\bcore\.mjs\s+\|/.test(line));
-const columns = coreLine?.split("|");
-const bootstrapCoverage = Number(columns?.[1]?.trim());
-if (!Number.isFinite(bootstrapCoverage)) {
-  throw new Error("Unable to read npm bootstrap coverage.");
-}
-if (bootstrapCoverage < 80) {
-  throw new Error(
-    `npm bootstrap line coverage ${bootstrapCoverage}% is below the 80% gate.`
+const reportLines = (result.stdout || "").split(/\r?\n/);
+for (const fileName of [
+  "core.mjs",
+  "detect.mjs",
+  "index.mjs",
+  "plan.mjs",
+  "platform.mjs",
+  "upgrade.mjs"
+]) {
+  const escapedName = fileName.replace(".", "\\.");
+  const reportLine = reportLines.find(
+    (line) => new RegExp(`\\b${escapedName}\\s+\\|`).test(line)
   );
+  const columns = reportLine?.split("|");
+  const lineCoverage = Number(columns?.[1]?.trim());
+  if (!Number.isFinite(lineCoverage)) {
+    throw new Error(`Unable to read npm bootstrap coverage for ${fileName}.`);
+  }
+  if (lineCoverage < 80) {
+    throw new Error(
+      `${fileName} line coverage ${lineCoverage}% is below the 80% gate.`
+    );
+  }
 }

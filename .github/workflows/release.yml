@@ -10,6 +10,20 @@ on:
         description: Existing version tag to release (for example, v0.2.0)
         required: true
         type: string
+      action:
+        description: Stage, verify lifecycle, or finalize an existing draft
+        required: true
+        default: stage
+        type: choice
+        options:
+          - stage
+          - lifecycle
+          - finalize
+      previous_tag:
+        description: Published Release used by the lifecycle verification
+        required: false
+        default: v0.2.0-rc.3
+        type: string
 
 permissions:
   contents: read
@@ -20,9 +34,13 @@ concurrency:
 
 jobs:
   build-core:
-    name: Build native Core
+    if: github.event_name == 'push' || inputs.action == 'stage'
+    name: Build native Core, bridge and signed plugins
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       SIGNATURE_STATUS: ${{ vars.AGENTBELL_SIGNATURE_STATUS || 'technical-preview' }}
@@ -35,6 +53,16 @@ jobs:
 
       - name: Resolve the checked-out release commit
         run: echo "RELEASE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Require the release workflow itself to run from the release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]; then
+            echo "Release signing identity must be refs/tags/$RELEASE_TAG; got $GITHUB_REF."
+            echo "For workflow_dispatch, select the existing tag as the workflow ref."
+            exit 1
+          fi
 
       - name: Use Node.js 24
         uses: actions/setup-node@v6
@@ -51,6 +79,11 @@ jobs:
       - name: Install Node.js dependencies
         run: npm ci
 
+      - name: Install Cosign for keyless plugin signing
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: v3.0.6
+
       - name: Enforce the M0.5 signing gate
         run: |
           if [ "$SIGNATURE_STATUS" != "technical-preview" ]; then
@@ -64,7 +97,7 @@ jobs:
           npm run ci
           npm run release:verify -- "$RELEASE_TAG"
 
-      - name: Build six native binaries
+      - name: Build six Core and six bridge binaries
         run: |
           version="${RELEASE_TAG#v}"
           source_date_epoch="$(git show -s --format=%ct "$RELEASE_COMMIT")"
@@ -73,6 +106,63 @@ jobs:
             --version "$version" \
             --commit "$RELEASE_COMMIT" \
             --build-time "$build_time"
+
+      - name: Smoke-test final Linux Core over TLS and HTTPS
+        env:
+          AGENTBELL_HTTPS_SMOKE_BINARY: ${{ github.workspace }}/artifacts/core/agentbell-linux-amd64
+        run: |
+          chmod +x "$AGENTBELL_HTTPS_SMOKE_BINARY"
+          npm run smoke:https
+
+      - name: Stage and keylessly sign five plugin bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          node scripts/plugin-bundles.mjs \
+            --output artifacts/plugins \
+            --version "$version" \
+            --min-core-version "$version" \
+            --max-core-version "$version" \
+            --signature-status sigstore-verified
+
+          for manifest in artifacts/plugins/*/plugin-manifest.json; do
+            bundle_dir="${manifest%/plugin-manifest.json}"
+            cosign sign-blob --yes \
+              --bundle "$bundle_dir/plugin.sigstore.json" \
+              "$manifest"
+          done
+
+      - name: Verify signed plugin staging with the final host Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_core="artifacts/core/agentbell-linux-amd64"
+          chmod +x "$host_core"
+          for bundle_dir in artifacts/plugins/*; do
+            "$host_core" plugin verify "$bundle_dir" --json
+          done
+
+      - name: Create deterministic plugin archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git show -s --format=%ct "$RELEASE_COMMIT")"
+          for bundle_dir in artifacts/plugins/*; do
+            bundle_name="${bundle_dir##*/}"
+            tar --sort=name \
+              --mtime="@$source_date_epoch" \
+              --owner=0 --group=0 --numeric-owner \
+              -C artifacts/plugins \
+              -cf - "$bundle_name" |
+              gzip -n -9 > "artifacts/plugins/$bundle_name.tar.gz"
+          done
+
+      - name: Build final npm package archives
+        run: |
+          mkdir -p artifacts/npm
+          npm pack --workspace @agentbell/hook-runtime --pack-destination artifacts/npm
+          npm pack --workspace @agentbell/cli --pack-destination artifacts/npm
 
       - name: Create platform archives
         working-directory: artifacts/core
@@ -98,9 +188,38 @@ jobs:
           version="${RELEASE_TAG#v}"
           node scripts/release-metadata.mjs \
             --directory artifacts/core \
+            --include-directory artifacts/npm \
             --version "$version" \
             --commit "$RELEASE_COMMIT" \
             --signature-status "$SIGNATURE_STATUS"
+
+      - name: Download the previous Release Core for migration smoke
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          previous_tag="${{ vars.AGENTBELL_M2_SMOKE_FROM_TAG || 'v0.2.0-rc.3' }}"
+          if [ "$previous_tag" = "$RELEASE_TAG" ]; then
+            echo "M2 migration smoke requires a different previous Release."
+            exit 1
+          fi
+          mkdir -p artifacts/previous
+          gh release download "$previous_tag" \
+            --pattern 'agentbell-linux-amd64' \
+            --dir artifacts/previous
+          echo "M2_PREVIOUS_TAG=$previous_tag" >> "$GITHUB_ENV"
+
+      - name: Smoke-test upgrade, stable Hooks, rollback and uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          node scripts/release-lifecycle-smoke.mjs \
+            --directory artifacts/core \
+            --version "$version" \
+            --previous-core artifacts/previous/agentbell-linux-amd64 \
+            --previous-version "${M2_PREVIOUS_TAG#v}"
 
       - name: Smoke-test host binary and npm bootstrap
         run: |
@@ -110,19 +229,33 @@ jobs:
             --directory artifacts/core \
             --version "$version"
 
-      - name: Upload Core artifacts
+      - name: Upload Core and bridge artifacts
         uses: actions/upload-artifact@v7
         with:
           name: agentbell-core
           path: artifacts/core/
           if-no-files-found: error
 
-  publish:
-    name: Publish Core, npm packages and GitHub release
+      - name: Upload signed plugin artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: agentbell-plugins
+          path: artifacts/plugins/*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload final npm package archives
+        uses: actions/upload-artifact@v7
+        with:
+          name: agentbell-npm
+          path: artifacts/npm/*.tgz
+          if-no-files-found: error
+
+  stage-draft:
+    if: github.event_name == 'push' || inputs.action == 'stage'
+    name: Stage and verify the draft GitHub release
     needs: build-core
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: npm-publish
     permissions:
       contents: write
       id-token: write
@@ -138,17 +271,35 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - name: Download Core artifacts
+      - name: Download Core and bridge artifacts
         uses: actions/download-artifact@v8
         with:
           name: agentbell-core
           path: artifacts/core
 
-      - name: Attest Core artifacts
+      - name: Download signed plugin artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: agentbell-plugins
+          path: artifacts/plugins
+
+      - name: Download final npm package archives
+        uses: actions/download-artifact@v8
+        with:
+          name: agentbell-npm
+          path: artifacts/npm
+
+      - name: Attest Core and bridge artifacts
         if: vars.AGENTBELL_ATTESTATIONS_ENABLED == 'true'
         uses: actions/attest@v4
         with:
           subject-path: artifacts/core/*
+
+      - name: Attest signed plugin artifacts
+        if: vars.AGENTBELL_ATTESTATIONS_ENABLED == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/plugins/*
 
       - name: Record unavailable GitHub artifact attestations
         if: vars.AGENTBELL_ATTESTATIONS_ENABLED != 'true'
@@ -156,7 +307,7 @@ jobs:
           echo "GitHub artifact attestations are disabled for this repository."
           echo "The release remains verifiable through checksums.txt, release-manifest.json and the retained Actions artifact."
 
-      - name: Stage Core artifacts in a draft GitHub release
+      - name: Stage Core, bridge, signed plugins and npm archives in a draft GitHub release
         shell: bash
         run: |
           set -euo pipefail
@@ -166,71 +317,31 @@ jobs:
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" artifacts/core/* --clobber
+            existing_is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+            if [ "$existing_is_draft" != "true" ]; then
+              echo "Refusing to replace assets on an already published Release."
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" \
+              artifacts/core/* artifacts/plugins/* artifacts/npm/* --clobber
           else
-            gh release create "$RELEASE_TAG" artifacts/core/* \
+            gh release create "$RELEASE_TAG" \
+              artifacts/core/* artifacts/plugins/* artifacts/npm/* \
               --draft \
               --generate-notes \
               --verify-tag \
               "${prerelease_args[@]}"
           fi
-
-      - name: Use Node.js 24 for trusted publishing
+      - name: Use Node.js 24
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org/
           package-manager-cache: false
-
-      - name: Ensure an OIDC-capable npm CLI
-        if: vars.NPM_PUBLISH_ENABLED == 'true'
-        run: npm install --global "npm@^11.5.1"
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build npm package archives
-        run: |
-          mkdir -p artifacts/npm
-          npm pack --workspace @agentbell/hook-runtime --pack-destination artifacts/npm
-          npm pack --workspace @agentbell/cli --pack-destination artifacts/npm
-
-      - name: Publish npm packages
-        if: vars.NPM_PUBLISH_ENABLED == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          publish_args=(--access public)
-          if [[ "$version" == *-* ]]; then
-            publish_args+=(--tag next)
-          fi
-
-          if npm view "@agentbell/hook-runtime@$version" version --silent >/dev/null 2>&1; then
-            echo "@agentbell/hook-runtime@$version is already published."
-          else
-            npm publish artifacts/npm/agentbell-hook-runtime-*.tgz "${publish_args[@]}"
-          fi
-
-          if npm view "@agentbell/cli@$version" version --silent >/dev/null 2>&1; then
-            echo "@agentbell/cli@$version is already published."
-          else
-            npm publish artifacts/npm/agentbell-cli-*.tgz "${publish_args[@]}"
-          fi
-
-      - name: Record disabled npm registry publishing
-        if: vars.NPM_PUBLISH_ENABLED != 'true'
-        run: |
-          echo "npm registry publishing is disabled until @agentbell ownership and trusted publishing are configured."
-          echo "The verified npm tgz archives will still be attached to the GitHub Release."
-
-      - name: Upload npm archives to GitHub release
-        run: gh release upload "$RELEASE_TAG" artifacts/npm/*.tgz --clobber
-
-      - name: Publish the completed GitHub release
-        run: gh release edit "$RELEASE_TAG" --draft=false
-
-      - name: Smoke-test the published private GitHub release
+      - name: Smoke-test the staged GitHub release
         shell: bash
         env:
           AGENTBELL_GITHUB_TOKEN: ${{ github.token }}
@@ -252,10 +363,420 @@ jobs:
             node packages/cli/bin/agentbell.mjs core-path --version "$version"
           )"
           "$installed_core" version --json
+          node packages/cli/bin/agentbell.mjs bridge doctor --json
 
-      - name: Return an incomplete release to draft
-        if: failure() && !cancelled()
+          mkdir -p "$data_root/plugin-downloads"
+          gh release download "$RELEASE_TAG" \
+            --pattern 'agentbell-plugin-*.tar.gz' \
+            --dir "$data_root/plugin-downloads"
+          for archive in "$data_root"/plugin-downloads/*.tar.gz; do
+            archive_name="${archive##*/}"
+            plugin_root="$data_root/plugin-${archive_name%.tar.gz}"
+            mkdir -p "$plugin_root"
+            tar -xzf "$archive" -C "$plugin_root" --strip-components=1
+            "$installed_core" plugin verify "$plugin_root" --json
+          done
+
+          mkdir -p "$data_root/npm-downloads"
+          gh release download "$RELEASE_TAG" \
+            --pattern 'agentbell-*.tgz' \
+            --pattern 'checksums.txt' \
+            --pattern 'release-manifest.json' \
+            --dir "$data_root/npm-downloads"
+          node scripts/smoke-npm-packages.mjs \
+            --cli "$data_root/npm-downloads/agentbell-cli-$version.tgz" \
+            --hook-runtime "$data_root/npm-downloads/agentbell-hook-runtime-$version.tgz" \
+            --checksums "$data_root/npm-downloads/checksums.txt" \
+            --manifest "$data_root/npm-downloads/release-manifest.json" \
+            --version "$version"
+
+      - name: Leave the verified release as a draft
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" --draft=true
+          echo "Draft Release $RELEASE_TAG passed staged asset smoke."
+          echo "It remains unpublished until a manual finalize action re-verifies and publishes it."
+
+  draft-lifecycle:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'lifecycle'
+    name: Previous Release to final Draft lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # GitHub only exposes Draft Releases to identities with push access.
+      # Static tests below forbid every Release/npm mutation command.
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREVIOUS_TAG: ${{ inputs.previous_tag }}
+      CURRENT_TAG: ${{ inputs.tag }}
+
+    steps:
+      - name: Check out the lifecycle harness
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Require a published previous Release and an unpublished final Draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_is_draft="$(
+            gh release view "$PREVIOUS_TAG" --json isDraft --jq .isDraft
+          )"
+          previous_is_prerelease="$(
+            gh release view "$PREVIOUS_TAG" --json isPrerelease --jq .isPrerelease
+          )"
+          if [ "$previous_is_draft" != "false" ]; then
+            echo "The previous lifecycle source must be a published Release."
+            exit 1
           fi
+
+          current_release="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate |
+              jq -s --arg tag "$CURRENT_TAG" \
+                '[.[][] | select(.tag_name == $tag)] |
+                 if length == 1 then .[0] else error("Draft tag was not unique") end'
+          )"
+          current_is_draft="$(jq -r .draft <<<"$current_release")"
+          current_is_prerelease="$(jq -r .prerelease <<<"$current_release")"
+          current_url="$(jq -r .html_url <<<"$current_release")"
+          if [ "$current_is_draft" != "true" ]; then
+            echo "The lifecycle target must remain a Draft Release."
+            exit 1
+          fi
+
+          {
+            echo "PREVIOUS_IS_PRERELEASE=$previous_is_prerelease"
+            echo "CURRENT_IS_PRERELEASE=$current_is_prerelease"
+            echo "CURRENT_RELEASE_URL=$current_url"
+          } >> "$GITHUB_ENV"
+
+      - name: Download both real Release boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/previous artifacts/current
+          gh release download "$PREVIOUS_TAG" \
+            --pattern 'agentbell-cli-*.tgz' \
+            --pattern 'agentbell-linux-amd64' \
+            --dir artifacts/previous
+          gh release download "$CURRENT_TAG" --dir artifacts/current
+
+      - name: Verify the final Draft bytes and selected tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${CURRENT_TAG#v}"
+          commit="$(git rev-parse "${CURRENT_TAG}^{commit}")"
+          jq -e \
+            --arg version "$version" \
+            --arg commit "$commit" \
+            '.schemaVersion == 1 and
+             .version == $version and
+             .commit == $commit and
+             .signatureStatus == "technical-preview"' \
+            artifacts/current/release-manifest.json >/dev/null
+          (
+            cd artifacts/current
+            sha256sum --check checksums.txt
+          )
+
+      - name: Install the real previous Release through its npm bootstrap
+        shell: bash
+        env:
+          AGENTBELL_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          previous_version="${PREVIOUS_TAG#v}"
+          data_root="${RUNNER_TEMP}/agentbell-draft-lifecycle-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$data_root" in
+            "${RUNNER_TEMP}/agentbell-draft-lifecycle-"*) ;;
+            *) echo "Unsafe lifecycle root: $data_root"; exit 1 ;;
+          esac
+          rm -rf -- "$data_root"
+          mkdir -p "$data_root" "$data_root/previous-cli"
+          echo "AGENTBELL_DATA_DIR=$data_root" >> "$GITHUB_ENV"
+          echo "HOME=$data_root/home" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$data_root/home/.config" >> "$GITHUB_ENV"
+          echo "AGENTBELL_GITHUB_TOKEN=$AGENTBELL_GITHUB_TOKEN" >> "$GITHUB_ENV"
+
+          previous_cli=(artifacts/previous/agentbell-cli-*.tgz)
+          if [ "${#previous_cli[@]}" -ne 1 ]; then
+            echo "Expected exactly one previous Release CLI archive."
+            exit 1
+          fi
+          tar -xzf "${previous_cli[0]}" -C "$data_root/previous-cli"
+          mkdir -p "$data_root/home"
+          AGENTBELL_DATA_DIR="$data_root" \
+          HOME="$data_root/home" \
+          XDG_CONFIG_HOME="$data_root/home/.config" \
+          node "$data_root/previous-cli/package/bin/agentbell.mjs" \
+            install-core --version "$previous_version"
+
+      - name: Upgrade, preserve Hook bytes, send fixture, rollback and uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_version="${CURRENT_TAG#v}"
+          previous_version="${PREVIOUS_TAG#v}"
+          node scripts/release-lifecycle-smoke.mjs \
+            --directory artifacts/current \
+            --version "$current_version" \
+            --previous-core artifacts/previous/agentbell-linux-amd64 \
+            --previous-version "$previous_version" \
+            --data-root "$AGENTBELL_DATA_DIR" \
+            --preinstalled-previous |
+            tee "$RUNNER_TEMP/draft-release-lifecycle-report.json"
+
+      - name: Prove the target is still Draft and npm is still unpublished
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_release="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate |
+              jq -s --arg tag "$CURRENT_TAG" \
+                '[.[][] | select(.tag_name == $tag)] |
+                 if length == 1 then .[0] else error("Draft tag was not unique") end'
+          )"
+          if [ "$(jq -r .draft <<<"$current_release")" != "true" ]; then
+            echo "The verified target is no longer a Draft Release."
+            exit 1
+          fi
+          version="${CURRENT_TAG#v}"
+          for package_name in @agentbell/cli @agentbell/hook-runtime; do
+            npm_error="$RUNNER_TEMP/npm-view-error.txt"
+            if npm view "$package_name@$version" version \
+              >"$RUNNER_TEMP/npm-view-output.txt" 2>"$npm_error"; then
+              echo "$package_name@$version was unexpectedly published."
+              exit 1
+            fi
+            if ! grep -q "E404" "$npm_error"; then
+              echo "npm registry lookup failed without proving E404."
+              sed -n '1,20p' "$npm_error"
+              exit 1
+            fi
+          done
+
+      - name: Save the lifecycle evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_url="$(
+            gh release view "$PREVIOUS_TAG" --json url --jq .url
+          )"
+          jq -n \
+            --arg previousTag "$PREVIOUS_TAG" \
+            --arg previousReleaseUrl "$previous_url" \
+            --arg currentTag "$CURRENT_TAG" \
+            --arg currentReleaseUrl "$CURRENT_RELEASE_URL" \
+            --arg ciUrl "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg commit "$GITHUB_SHA" \
+            --slurpfile lifecycle "$RUNNER_TEMP/draft-release-lifecycle-report.json" \
+            '{
+              schemaVersion: 1,
+              previousTag: $previousTag,
+              previousReleaseUrl: $previousReleaseUrl,
+              currentTag: $currentTag,
+              currentReleaseUrl: $currentReleaseUrl,
+              ciUrl: $ciUrl,
+              harnessCommit: $commit,
+              targetRemainedDraft: true,
+              npmRemainedUnpublished: true,
+              lifecycle: $lifecycle[0]
+            }' > draft-release-lifecycle-evidence.json
+          jq . draft-release-lifecycle-evidence.json
+
+      - name: Upload the lifecycle evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: draft-release-lifecycle-evidence
+          path: draft-release-lifecycle-evidence.json
+          if-no-files-found: error
+
+  finalize-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'finalize'
+    name: Re-verify and publish the draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm-publish
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Require finalize to run from the release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]; then
+            echo "Finalize must run from refs/tags/$RELEASE_TAG; got $GITHUB_REF."
+            echo "Select the existing tag as the workflow ref."
+            exit 1
+          fi
+
+      - name: Require an existing draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing_is_draft="$(
+            gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft
+          )"
+          if [ "$existing_is_draft" != "true" ]; then
+            echo "Finalize requires an existing draft Release."
+            exit 1
+          fi
+
+      - name: Require npm trusted publishing to be enabled
+        shell: bash
+        run: |
+          if [ "${{ vars.NPM_PUBLISH_ENABLED }}" != "true" ]; then
+            echo "NPM_PUBLISH_ENABLED must be true before finalizing a Release."
+            echo "The verified GitHub Release remains a draft."
+            exit 1
+          fi
+
+      - name: Use Node.js 24 for trusted publishing
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+          package-manager-cache: false
+
+      - name: Ensure an OIDC-capable npm CLI
+        run: npm install --global "npm@^11.5.1"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Re-download the final draft assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release
+          gh release download "$RELEASE_TAG" --dir artifacts/release
+
+      - name: Verify draft metadata against the selected tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          commit="$(git rev-parse HEAD)"
+          jq -e \
+            --arg version "$version" \
+            --arg commit "$commit" \
+            '.schemaVersion == 1 and
+             .version == $version and
+             .commit == $commit and
+             .signatureStatus == "technical-preview"' \
+            artifacts/release/release-manifest.json >/dev/null
+          (
+            cd artifacts/release
+            sha256sum --check checksums.txt
+          )
+
+      - name: Re-verify the draft GitHub release
+        shell: bash
+        env:
+          AGENTBELL_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          data_root="${RUNNER_TEMP}/agentbell-finalize-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$data_root" in
+            "${RUNNER_TEMP}/agentbell-finalize-smoke-"*) ;;
+            *) echo "Unsafe release smoke path: $data_root"; exit 1 ;;
+          esac
+          rm -rf -- "$data_root"
+          mkdir -p "$data_root"
+          trap 'rm -rf -- "$data_root"' EXIT
+          export AGENTBELL_DATA_DIR="$data_root"
+
+          node packages/cli/bin/agentbell.mjs install-core --version "$version"
+          installed_core="$(
+            node packages/cli/bin/agentbell.mjs core-path --version "$version"
+          )"
+          "$installed_core" version --json
+          node packages/cli/bin/agentbell.mjs bridge doctor --json
+
+          shopt -s nullglob
+          plugin_archives=(artifacts/release/agentbell-plugin-*.tar.gz)
+          if [ "${#plugin_archives[@]}" -ne 5 ]; then
+            echo "Expected exactly five final plugin archives."
+            exit 1
+          fi
+          for archive in "${plugin_archives[@]}"; do
+            archive_name="${archive##*/}"
+            plugin_root="$data_root/plugin-${archive_name%.tar.gz}"
+            mkdir -p "$plugin_root"
+            tar -xzf "$archive" -C "$plugin_root" --strip-components=1
+            "$installed_core" plugin verify "$plugin_root" --json
+          done
+
+          node scripts/smoke-npm-packages.mjs \
+            --cli "artifacts/release/agentbell-cli-$version.tgz" \
+            --hook-runtime "artifacts/release/agentbell-hook-runtime-$version.tgz" \
+            --checksums "artifacts/release/checksums.txt" \
+            --manifest "artifacts/release/release-manifest.json" \
+            --version "$version"
+
+      - name: Publish npm packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          publish_args=(--access public)
+          if [[ "$version" == *-* ]]; then
+            publish_args+=(--tag next)
+          fi
+
+          shopt -s nullglob
+          hook_archives=(artifacts/release/agentbell-hook-runtime-*.tgz)
+          cli_archives=(artifacts/release/agentbell-cli-*.tgz)
+          if [ "${#hook_archives[@]}" -ne 1 ] || [ "${#cli_archives[@]}" -ne 1 ]; then
+            echo "Expected exactly one final tgz for each npm package."
+            exit 1
+          fi
+
+          publish_or_verify() {
+            local package_name="$1"
+            local archive="$2"
+            local published_integrity
+            published_integrity="$(
+              npm view "$package_name@$version" dist.integrity --silent 2>/dev/null || true
+            )"
+            if [ -z "$published_integrity" ]; then
+              npm publish "$archive" "${publish_args[@]}"
+              return
+            fi
+            local archive_integrity
+            archive_integrity="$(
+              node -e 'const c=require("node:crypto"),f=require("node:fs");process.stdout.write("sha512-"+c.createHash("sha512").update(f.readFileSync(process.argv[1])).digest("base64"))' "$archive"
+            )"
+            if [ "$published_integrity" != "$archive_integrity" ]; then
+              echo "Published npm archive does not match the final Release tgz."
+              exit 1
+            fi
+            echo "$package_name@$version is already published with the exact final archive."
+          }
+
+          publish_or_verify "@agentbell/hook-runtime" "${hook_archives[0]}"
+          publish_or_verify "@agentbell/cli" "${cli_archives[0]}"
+
+      - name: Publish the completed GitHub release
+        run: gh release edit "$RELEASE_TAG" --draft=false

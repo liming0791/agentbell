@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,8 +18,11 @@ import (
 	"time"
 
 	"github.com/liming0791/agentbell/core/internal/adapter"
+	"github.com/liming0791/agentbell/core/internal/binding"
+	"github.com/liming0791/agentbell/core/internal/bridge"
 	"github.com/liming0791/agentbell/core/internal/config"
 	"github.com/liming0791/agentbell/core/internal/event"
+	"github.com/liming0791/agentbell/core/internal/installstate"
 	"github.com/liming0791/agentbell/core/internal/paths"
 	"github.com/liming0791/agentbell/core/internal/queue"
 	"github.com/liming0791/agentbell/core/internal/service"
@@ -49,6 +53,22 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		err = runDoctor(args[1:], stdout)
 	case "queue":
 		err = runQueue(args[1:], stdout)
+	case "settings":
+		err = runSettings(args[1:], stdout)
+	case "policy":
+		err = runPolicy(args[1:], stdout)
+	case "bind":
+		err = runBind(args[1:], stdin, stdout)
+	case "hook":
+		err = runHook(args[1:], stdout)
+	case "bridge":
+		err = runBridge(args[1:], stdout)
+	case "plugin":
+		err = runPlugin(args[1:], stdout)
+	case "relay":
+		err = runRelay(args[1:], stdin, stdout)
+	case "remote":
+		err = runRemote(args[1:], stdin, stdout)
 	case "adapter":
 		err = runAdapter(args[1:], stdout)
 	case "setup":
@@ -73,13 +93,25 @@ func printHelp(writer io.Writer) {
 Usage:
   agentbell version [--json]
   agentbell emit --adapter <id> --surface <surface> --runtime <runtime> --stdin [--fail-open]
-  agentbell service <run --foreground|install|status|uninstall>
+  agentbell service <run --foreground|install|status|restart|uninstall>
   agentbell doctor [--json]
   agentbell queue list [--state pending|inflight|dead]
   agentbell queue retry <event-id>
-  agentbell adapter <detect|plan|install|verify|uninstall|diagnose> <codex|claude-code|kimi-code>
+  agentbell settings <show|channel|event|template|quiet-hours> ...
+  agentbell policy <status|explain> ...
+  agentbell bind <create|complete|status|cancel> ...
+  agentbell hook <conflicts|reconcile> [all|codex|claude-code|kimi-code] [--dry-run] [--json]
+  agentbell bridge doctor [--json]
+  agentbell plugin verify <bundle> [--json]
+  agentbell relay <configure|run|bind create|peers list|peers revoke|receipts list|connector add|connector list|connector remove|connector pair> ...
+  agentbell remote emit --adapter <id> --surface <surface> --runtime <runtime> --stdin [--fail-open]
+  agentbell remote configure --runtime <runtime> --connector <type> ...
+  agentbell remote pair --code-stdin [--endpoint <url>] [--ssh-tunnel]
+  agentbell remote test --adapter <id> --surface <surface> [--json]
+  agentbell remote drain --stdio
+  agentbell adapter <detect|plan|install|verify|uninstall|diagnose> <codex|claude-code|kimi-code|opencode|qoder|qoder-work|trae>
   agentbell adapter uninstall all [--dry-run]
-  agentbell uninstall [--dry-run] [--json]
+  agentbell uninstall [--dry-run] [--json] [--delete-remote-credential --confirm-delete-remote-credential]
   agentbell setup [--dry-run] [--json]
   agentbell test [--channel <id>] [--json]`)
 }
@@ -107,6 +139,16 @@ func runEmit(args []string, stdin io.Reader, stdout io.Writer) error {
 	runtimeName := flags.String("runtime", "", "runtime location")
 	useStdin := flags.Bool("stdin", false, "read hook JSON from stdin")
 	failOpen := flags.Bool("fail-open", false, "return success if enqueue fails")
+	bridgeProtocol := flags.Int(
+		"bridge-protocol",
+		0,
+		"internal stable bridge protocol",
+	)
+	activationGeneration := flags.Uint64(
+		"activation-generation",
+		0,
+		"internal active Core generation",
+	)
 	if err := flags.Parse(args); err != nil {
 		return failOpenError(*failOpen, err)
 	}
@@ -114,6 +156,26 @@ func runEmit(args []string, stdin io.Reader, stdout io.Writer) error {
 		return failOpenError(*failOpen, errors.New(
 			"emit requires --adapter, --surface, --runtime and --stdin",
 		))
+	}
+	proofContext := adapter.RuntimeProofContext{}
+	if *bridgeProtocol != 0 || *activationGeneration != 0 {
+		if *bridgeProtocol != 1 {
+			return failOpenError(
+				*failOpen,
+				errors.New("bridge protocol must be 1"),
+			)
+		}
+		if *activationGeneration == 0 {
+			return failOpenError(
+				*failOpen,
+				errors.New("activation generation is required"),
+			)
+		}
+		proofContext = adapter.RuntimeProofContext{
+			BridgeProtocol:       *bridgeProtocol,
+			CoreVersion:          version.Current().Version,
+			ActivationGeneration: *activationGeneration,
+		}
 	}
 
 	raw, err := readLimited(stdin, maxInputSize)
@@ -133,11 +195,12 @@ func runEmit(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return failOpenError(*failOpen, err)
 	}
-	if proofErr := adapter.RecordRuntimeProof(
+	if proofErr := adapter.RecordRuntimeProofWithContext(
 		resolved.StateDir,
 		*adapterID,
 		notification.Event,
 		now,
+		proofContext,
 	); proofErr != nil && os.Getenv("AGENTBELL_DEBUG") == "1" {
 		fmt.Fprintln(os.Stderr, "agentbell runtime proof:", proofErr)
 	}
@@ -169,7 +232,7 @@ func runEmit(args []string, stdin io.Reader, stdout io.Writer) error {
 
 func runService(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: agentbell service <run|install|status|uninstall>")
+		return errors.New("usage: agentbell service <run|install|status|restart|uninstall>")
 	}
 	if args[0] != "run" {
 		return runServiceManager(args, stdout)
@@ -199,6 +262,10 @@ func runService(args []string, stdout io.Writer) error {
 		SenderFactory: func(settings config.Config) service.Sender {
 			return transport.LarkCLI{Command: settings.LarkCLIPath}
 		},
+		Processor: newM2Processor(resolved),
+	}
+	if remoteWorkers, workerErr := configuredRemoteWorkers(resolved); workerErr == nil {
+		runner.Workers = append(runner.Workers, remoteWorkers...)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -206,7 +273,10 @@ func runService(args []string, stdout io.Writer) error {
 }
 
 func runServiceManager(args []string, stdout io.Writer) error {
-	if args[0] != "install" && args[0] != "status" && args[0] != "uninstall" {
+	if args[0] != "install" &&
+		args[0] != "status" &&
+		args[0] != "restart" &&
+		args[0] != "uninstall" {
 		return fmt.Errorf("unsupported service command %q", args[0])
 	}
 	flags := flag.NewFlagSet("service "+args[0], flag.ContinueOnError)
@@ -216,8 +286,8 @@ func runServiceManager(args []string, stdout io.Writer) error {
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
-	if args[0] == "status" && *dryRun {
-		return errors.New("service status does not support --dry-run")
+	if (args[0] == "status" || args[0] == "restart") && *dryRun {
+		return fmt.Errorf("service %s does not support --dry-run", args[0])
 	}
 	resolved, err := paths.Resolve()
 	if err != nil {
@@ -259,7 +329,7 @@ func runServiceManager(args []string, stdout io.Writer) error {
 			}
 		}
 	}
-	manager, err := newServiceManager(larkCLIPath, resolved.LogDir)
+	manager, err := configuredServiceManager(larkCLIPath, resolved)
 	if err != nil {
 		return err
 	}
@@ -269,6 +339,8 @@ func runServiceManager(args []string, stdout io.Writer) error {
 		result, err = manager.Install(context.Background(), *dryRun)
 	case "status":
 		result, err = manager.Status(context.Background())
+	case "restart":
+		result, err = manager.Restart(context.Background())
 	case "uninstall":
 		result, err = manager.Uninstall(context.Background(), *dryRun)
 	}
@@ -286,57 +358,7 @@ func runServiceManager(args []string, stdout io.Writer) error {
 }
 
 func runDoctor(args []string, stdout io.Writer) error {
-	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	asJSON := flags.Bool("json", false, "print JSON")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	resolved, err := paths.Resolve()
-	if err != nil {
-		return err
-	}
-	queueValue, err := queue.Open(filepath.Join(resolved.StateDir, "queue"))
-	if err != nil {
-		return err
-	}
-	stats, err := queueValue.Stats()
-	if err != nil {
-		return err
-	}
-	loadedConfig, configErr := config.Load(resolved.ConfigFile)
-	var larkErr error
-	larkPath := ""
-	if configErr == nil && loadedConfig.LarkCLIPath != "" {
-		larkPath = loadedConfig.LarkCLIPath
-		_, larkErr = os.Stat(larkPath)
-	} else {
-		larkPath, larkErr = exec.LookPath("lark-cli")
-	}
-	result := map[string]any{
-		"version":      version.Current(),
-		"paths":        resolved,
-		"queue":        stats,
-		"config":       statusForError(configErr),
-		"larkCli":      statusForError(larkErr),
-		"larkCliPath":  larkPath,
-		"platform":     runtime.GOOS,
-		"architecture": runtime.GOARCH,
-	}
-	if *asJSON {
-		return writeJSON(stdout, result)
-	}
-	fmt.Fprintf(
-		stdout,
-		"AgentBell %s\nConfig: %s\nlark-cli: %s\nQueue: %d pending, %d inflight, %d dead\n",
-		version.Current().Version,
-		result["config"],
-		result["larkCli"],
-		stats.Pending,
-		stats.Inflight,
-		stats.Dead,
-	)
-	return nil
+	return runUnifiedDoctor(args, stdout)
 }
 
 func runQueue(args []string, stdout io.Writer) error {
@@ -391,31 +413,286 @@ type cliAdapter interface {
 	Diagnose() adapter.AdapterResult
 }
 
-func adapterForID(id, stateDir string) (cliAdapter, error) {
+type adapterRuntime struct {
+	CoreExecutable   string
+	BridgeExecutable string
+	ActiveGeneration uint64
+}
+
+func adapterForID(id string, resolved paths.Paths) (cliAdapter, error) {
+	adapterRuntime, err := resolveAdapterRuntime(resolved)
+	if err != nil {
+		return nil, err
+	}
+	return adapterForIDWithRuntime(id, resolved.StateDir, adapterRuntime)
+}
+
+func adapterForIDWithRuntime(
+	id,
+	stateDir string,
+	selectedRuntime adapterRuntime,
+) (cliAdapter, error) {
+	var selected cliAdapter
+	var err error
 	switch id {
 	case "codex":
-		return adapter.NewCodexAdapter("", stateDir)
+		var value *adapter.CodexAdapter
+		value, err = adapter.NewCodexAdapter(selectedRuntime.CoreExecutable, stateDir)
+		if err == nil {
+			value.BridgeExecutable = selectedRuntime.BridgeExecutable
+			value.ActiveGeneration = selectedRuntime.ActiveGeneration
+			selected = value
+		}
 	case "claude-code":
-		return adapter.NewClaudeAdapter("", stateDir)
+		var value *adapter.ClaudeAdapter
+		value, err = adapter.NewClaudeAdapter(selectedRuntime.CoreExecutable, stateDir)
+		if err == nil {
+			value.BridgeExecutable = selectedRuntime.BridgeExecutable
+			value.ActiveGeneration = selectedRuntime.ActiveGeneration
+			selected = value
+		}
 	case "kimi-code":
-		return adapter.NewKimiAdapter("", stateDir)
+		var value *adapter.KimiAdapter
+		value, err = adapter.NewKimiAdapter(selectedRuntime.CoreExecutable, stateDir)
+		if err == nil {
+			value.BridgeExecutable = selectedRuntime.BridgeExecutable
+			value.ActiveGeneration = selectedRuntime.ActiveGeneration
+			selected = value
+		}
+	case "opencode":
+		selected, err = adapter.NewOpenCodeAdapter(selectedRuntime.CoreExecutable, stateDir)
+	case "qoder":
+		selected, err = adapter.NewQoderAdapter(selectedRuntime.CoreExecutable, stateDir)
+	case "qoder-work":
+		selected, err = adapter.NewQoderWorkAdapter(selectedRuntime.CoreExecutable, stateDir)
+	case "trae":
+		selected, err = adapter.NewTraeAdapter(selectedRuntime.CoreExecutable, stateDir)
 	default:
 		return nil, fmt.Errorf("adapter %q is not implemented", id)
 	}
+	return selected, err
 }
 
-var supportedAdapterIDs = []string{"codex", "claude-code", "kimi-code"}
+var supportedAdapterIDs = []string{
+	"codex", "claude-code", "kimi-code", "opencode", "qoder", "qoder-work", "trae",
+}
 
-func supportedAdapters(stateDir string) ([]cliAdapter, error) {
+func supportedAdapters(resolved paths.Paths) ([]cliAdapter, error) {
+	selectedRuntime, err := resolveAdapterRuntime(resolved)
+	if err != nil {
+		return nil, err
+	}
+	return supportedAdaptersWithRuntime(
+		resolved.StateDir,
+		selectedRuntime,
+		runtime.GOOS,
+	)
+}
+
+func supportedAdaptersWithRuntime(
+	stateDir string,
+	selectedRuntime adapterRuntime,
+	goos string,
+) ([]cliAdapter, error) {
 	result := make([]cliAdapter, 0, len(supportedAdapterIDs))
 	for _, id := range supportedAdapterIDs {
-		value, err := adapterForID(id, stateDir)
+		if !adapterSupportedOnPlatform(id, goos) {
+			result = append(result, platformSkippedAdapter{
+				id:       id,
+				platform: goos,
+			})
+			continue
+		}
+		value, err := adapterForIDWithRuntime(
+			id,
+			stateDir,
+			selectedRuntime,
+		)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, value)
 	}
 	return result, nil
+}
+
+func adapterSupportedOnPlatform(id, goos string) bool {
+	switch id {
+	case "qoder-work", "trae":
+		return goos == "darwin" || goos == "windows"
+	default:
+		return true
+	}
+}
+
+type platformSkippedAdapter struct {
+	id       string
+	platform string
+}
+
+func (value platformSkippedAdapter) Plan() adapter.AdapterPlan {
+	return adapter.AdapterPlan{
+		Adapter: value.id,
+		Changes: []string{value.message()},
+	}
+}
+
+func (value platformSkippedAdapter) Install(
+	bool,
+) (adapter.AdapterResult, error) {
+	return value.result(), errors.New(value.unsupportedMessage())
+}
+
+func (value platformSkippedAdapter) Verify() (adapter.AdapterResult, error) {
+	return value.result(), errors.New(value.unsupportedMessage())
+}
+
+func (value platformSkippedAdapter) Uninstall(
+	bool,
+) (adapter.AdapterResult, error) {
+	return value.result(), nil
+}
+
+func (value platformSkippedAdapter) Diagnose() adapter.AdapterResult {
+	return value.result()
+}
+
+func (value platformSkippedAdapter) result() adapter.AdapterResult {
+	return adapter.AdapterResult{
+		Adapter: value.id,
+		Message: value.message(),
+	}
+}
+
+func (value platformSkippedAdapter) message() string {
+	return value.unsupportedMessage() + "; skipped"
+}
+
+func (value platformSkippedAdapter) unsupportedMessage() string {
+	return fmt.Sprintf(
+		"%s adapter is not supported on %s",
+		value.id,
+		value.platform,
+	)
+}
+
+func resolveAdapterRuntime(resolved paths.Paths) (adapterRuntime, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return adapterRuntime{}, err
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return adapterRuntime{}, err
+	}
+	legacy := adapterRuntime{CoreExecutable: executable}
+
+	store := installstate.NewStore(installstate.OSFileSystem{})
+	active, err := store.Load(resolved.DataDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return legacy, nil
+	}
+	if err != nil {
+		return adapterRuntime{}, fmt.Errorf("load active AgentBell runtime: %w", err)
+	}
+	target, err := bridge.CurrentTarget(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return adapterRuntime{}, err
+	}
+	if active.Target != target {
+		return adapterRuntime{}, fmt.Errorf(
+			"active AgentBell target %s does not match host target %s",
+			active.Target,
+			target,
+		)
+	}
+	coreExecutable, err := store.ResolveManagedCore(resolved.DataDir, active)
+	if err != nil {
+		return adapterRuntime{}, fmt.Errorf("resolve active AgentBell Core: %w", err)
+	}
+	bridgeExecutable, err := stableBridgePath(resolved.DataDir)
+	if err != nil {
+		return adapterRuntime{}, err
+	}
+	return adapterRuntime{
+		CoreExecutable:   coreExecutable,
+		BridgeExecutable: bridgeExecutable,
+		ActiveGeneration: active.Generation,
+	}, nil
+}
+
+func stableBridgePath(dataRoot string) (string, error) {
+	if !filepath.IsAbs(dataRoot) {
+		return "", errors.New("AgentBell data root must be absolute")
+	}
+	root := filepath.Clean(dataRoot)
+	if root == string(filepath.Separator) {
+		return "", errors.New("AgentBell data root cannot be the filesystem root")
+	}
+	name := "agentbell-bridge"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	candidate := filepath.Join(root, "bin", "bridge", "v1", name)
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil ||
+		relative == ".." ||
+		strings.HasPrefix(relative, ".."+string(filepath.Separator)) ||
+		filepath.IsAbs(relative) {
+		return "", errors.New("stable AgentBell bridge path escapes the data root")
+	}
+	current := root
+	components := append(
+		[]string{"."},
+		strings.Split(relative, string(filepath.Separator))...,
+	)
+	for _, component := range components {
+		if component != "." {
+			current = filepath.Join(current, component)
+		}
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			return "", fmt.Errorf("validate stable AgentBell bridge: %w", statErr)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return "", fmt.Errorf(
+				"stable AgentBell bridge path contains symlink %s",
+				current,
+			)
+		}
+		if current == candidate {
+			if !info.Mode().IsRegular() {
+				return "", errors.New("stable AgentBell bridge is not a regular file")
+			}
+			if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+				return "", errors.New("stable AgentBell bridge is not executable")
+			}
+		}
+	}
+	return candidate, nil
+}
+
+func configuredServiceManager(
+	larkCLIPath string,
+	resolved paths.Paths,
+) (*service.Manager, error) {
+	manager, err := newServiceManager(larkCLIPath, resolved.LogDir)
+	if err != nil {
+		return nil, err
+	}
+	selectedRuntime, err := resolveAdapterRuntime(resolved)
+	if err != nil {
+		return nil, err
+	}
+	manager.Executable = selectedRuntime.CoreExecutable
+	if selectedRuntime.BridgeExecutable == "" {
+		manager.ServiceMode = service.ServiceModeLegacy
+		manager.BridgeExecutable = ""
+		return manager, nil
+	}
+	manager.ServiceMode = service.ServiceModeBridge
+	manager.BridgeExecutable = selectedRuntime.BridgeExecutable
+	return manager, nil
 }
 
 func uninstallAdapters(
@@ -448,16 +725,16 @@ func runAdapter(args []string, stdout io.Writer) error {
 		if len(args) > 1 && args[1] != "--json" {
 			id = args[1]
 		}
-		selected, err := adapterForID(id, resolved.StateDir)
+		selected, err := adapterForID(id, resolved)
 		if err != nil {
 			return err
 		}
 		return writeJSON(stdout, selected.Diagnose())
 	case "plan":
 		if len(args) < 2 {
-			return errors.New("usage: agentbell adapter plan <codex|claude-code|kimi-code>")
+			return errors.New("usage: agentbell adapter plan <codex|claude-code|kimi-code|opencode|qoder|qoder-work|trae>")
 		}
-		selected, err := adapterForID(args[1], resolved.StateDir)
+		selected, err := adapterForID(args[1], resolved)
 		if err != nil {
 			return err
 		}
@@ -465,7 +742,7 @@ func runAdapter(args []string, stdout io.Writer) error {
 	case "install", "uninstall":
 		if len(args) < 2 {
 			return fmt.Errorf(
-				"usage: agentbell adapter %s <codex|claude-code|kimi-code|all> [--dry-run]",
+				"usage: agentbell adapter %s <codex|claude-code|kimi-code|opencode|qoder|qoder-work|trae|all> [--dry-run]",
 				args[0],
 			)
 		}
@@ -476,7 +753,7 @@ func runAdapter(args []string, stdout io.Writer) error {
 			}
 		}
 		if args[0] == "uninstall" && args[1] == "all" {
-			selected, err := supportedAdapters(resolved.StateDir)
+			selected, err := supportedAdapters(resolved)
 			if err != nil {
 				return err
 			}
@@ -491,7 +768,7 @@ func runAdapter(args []string, stdout io.Writer) error {
 			}
 			return writeJSON(stdout, results)
 		}
-		selected, err := adapterForID(args[1], resolved.StateDir)
+		selected, err := adapterForID(args[1], resolved)
 		if err != nil {
 			return err
 		}
@@ -507,9 +784,9 @@ func runAdapter(args []string, stdout io.Writer) error {
 		return writeJSON(stdout, result)
 	case "verify":
 		if len(args) < 2 {
-			return errors.New("usage: agentbell adapter verify <codex|claude-code|kimi-code>")
+			return errors.New("usage: agentbell adapter verify <codex|claude-code|kimi-code|opencode|qoder|qoder-work|trae>")
 		}
-		selected, err := adapterForID(args[1], resolved.StateDir)
+		selected, err := adapterForID(args[1], resolved)
 		if err != nil {
 			return err
 		}
@@ -520,9 +797,9 @@ func runAdapter(args []string, stdout io.Writer) error {
 		return writeJSON(stdout, result)
 	case "diagnose":
 		if len(args) < 2 {
-			return errors.New("usage: agentbell adapter diagnose <codex|claude-code|kimi-code>")
+			return errors.New("usage: agentbell adapter diagnose <codex|claude-code|kimi-code|opencode|qoder|qoder-work|trae>")
 		}
-		selected, err := adapterForID(args[1], resolved.StateDir)
+		selected, err := adapterForID(args[1], resolved)
 		if err != nil {
 			return err
 		}
@@ -530,83 +807,6 @@ func runAdapter(args []string, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("unsupported adapter command %q", args[0])
 	}
-}
-
-type productUninstallReport struct {
-	DryRun      bool                    `json:"dryRun"`
-	Service     service.ManagerResult   `json:"service"`
-	Adapters    []adapter.AdapterResult `json:"adapters"`
-	CoreCleanup string                  `json:"coreCleanup"`
-	Preserved   []string                `json:"preserved"`
-}
-
-func runProductUninstall(args []string, stdout io.Writer) error {
-	flags := flag.NewFlagSet("uninstall", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	dryRun := flags.Bool("dry-run", false, "show changes without applying them")
-	asJSON := flags.Bool("json", false, "print JSON")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("usage: agentbell uninstall [--dry-run] [--json]")
-	}
-	resolved, err := paths.Resolve()
-	if err != nil {
-		return err
-	}
-	manager, err := newServiceManager("", resolved.LogDir)
-	if err != nil {
-		return err
-	}
-	selected, err := supportedAdapters(resolved.StateDir)
-	if err != nil {
-		return err
-	}
-
-	serviceResult, err := manager.Uninstall(context.Background(), true)
-	if err != nil {
-		return fmt.Errorf("preflight service uninstall: %w", err)
-	}
-	adapterResults, err := uninstallAdapters(selected, true)
-	if err != nil {
-		return fmt.Errorf("preflight %w", err)
-	}
-	if !*dryRun {
-		serviceResult, err = manager.Uninstall(context.Background(), false)
-		if err != nil {
-			return fmt.Errorf("uninstall service: %w", err)
-		}
-		adapterResults, err = uninstallAdapters(selected, false)
-		if err != nil {
-			return err
-		}
-	}
-	report := productUninstallReport{
-		DryRun:      *dryRun,
-		Service:     serviceResult,
-		Adapters:    adapterResults,
-		CoreCleanup: "npm bootstrap removes its managed Core version after this process exits; direct binary invocations retain the executable",
-		Preserved:   []string{resolved.ConfigFile, resolved.StateDir},
-	}
-	if *asJSON {
-		return writeJSON(stdout, report)
-	}
-	if *dryRun {
-		fmt.Fprintln(stdout, "AgentBell product uninstall plan:")
-	} else {
-		fmt.Fprintln(stdout, "AgentBell login service and supported product hooks are uninstalled.")
-	}
-	fmt.Fprintf(stdout, "Service: %s\n", serviceResult.Message)
-	for _, result := range adapterResults {
-		fmt.Fprintf(stdout, "%s: %s\n", result.Adapter, result.Message)
-	}
-	fmt.Fprintln(stdout, report.CoreCleanup)
-	fmt.Fprintln(stdout, "Configuration and queue data were preserved:")
-	for _, path := range report.Preserved {
-		fmt.Fprintf(stdout, "  %s\n", path)
-	}
-	return nil
 }
 
 func runSetup(args []string, stdin io.Reader, stdout io.Writer) error {
@@ -621,18 +821,47 @@ func runSetup(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	selectedRuntime, err := resolveAdapterRuntime(resolved)
+	if err != nil {
+		return err
+	}
 	flow := &setup.Setup{
-		Prompter:   setup.NewStdioPrompter(stdin, stdout),
-		ConfigFile: resolved.ConfigFile,
-		StateDir:   resolved.StateDir,
-		DryRun:     *dryRun,
-		Out:        stdout,
+		Prompter:         setup.NewStdioPrompter(stdin, stdout),
+		ConfigFile:       resolved.ConfigFile,
+		StateDir:         resolved.StateDir,
+		CoreExecutable:   selectedRuntime.CoreExecutable,
+		BridgeExecutable: selectedRuntime.BridgeExecutable,
+		ActiveGeneration: selectedRuntime.ActiveGeneration,
+		DryRun:           *dryRun,
+		Out:              stdout,
+		CreateBinding: func(
+			_ context.Context,
+			request setup.BindingRequest,
+		) (setup.BindingResult, error) {
+			store := binding.NewStore(filepath.Join(resolved.StateDir, "bindings"))
+			code, record, err := store.Create(
+				request.ChannelName,
+				request.Identity,
+				request.TTL,
+				bindingNow().UTC(),
+				request.LarkCLIPath,
+			)
+			if err != nil {
+				return setup.BindingResult{}, err
+			}
+			return setup.BindingResult{
+				Code:        code,
+				ChannelName: record.ChannelName,
+				Identity:    record.As,
+				ExpiresAt:   record.ExpiresAt,
+			}, nil
+		},
 		InstallService: func(ctx context.Context) (string, error) {
 			loaded, err := config.Load(resolved.ConfigFile)
 			if err != nil {
 				return "", err
 			}
-			manager, err := newServiceManager(loaded.LarkCLIPath, resolved.LogDir)
+			manager, err := configuredServiceManager(loaded.LarkCLIPath, resolved)
 			if err != nil {
 				return "", err
 			}
@@ -702,7 +931,6 @@ func runTest(args []string, stdout io.Writer) error {
 		result := map[string]any{
 			"ok":      sendErr == nil,
 			"channel": channel.ID,
-			"chatId":  channel.ChatID,
 			"sentAt":  now.UTC().Format(time.RFC3339),
 		}
 		if sendErr != nil {
@@ -712,21 +940,32 @@ func runTest(args []string, stdout io.Writer) error {
 			return err
 		}
 	} else if sendErr == nil {
-		fmt.Fprintf(stdout, "测试消息已发送到频道 %s（%s）\n", channel.ID, channel.ChatID)
+		fmt.Fprintf(stdout, "测试消息已发送到频道 %s\n", channel.ID)
 	}
 	return sendErr
 }
 
 func readLimited(reader io.Reader, maximum int64) ([]byte, error) {
-	limited := io.LimitReader(reader, maximum+1)
-	value, err := io.ReadAll(limited)
+	// Hook runners do not consistently close the command's stdin before they
+	// wait for the command to exit. Decode exactly one JSON value so a complete
+	// payload can be accepted without waiting for EOF and deadlocking until the
+	// product's Hook timeout kills AgentBell.
+	limited := &io.LimitedReader{R: reader, N: maximum + 1}
+	var value json.RawMessage
+	err := json.NewDecoder(limited).Decode(&value)
 	if err != nil {
+		if limited.N == 0 {
+			return nil, fmt.Errorf("hook input exceeds %d bytes", maximum)
+		}
+		if errors.Is(err, io.EOF) {
+			return nil, errors.New("hook input is empty")
+		}
 		return nil, err
 	}
 	if int64(len(value)) > maximum {
 		return nil, fmt.Errorf("hook input exceeds %d bytes", maximum)
 	}
-	if len(strings.TrimSpace(string(value))) == 0 {
+	if len(value) == 0 {
 		return nil, errors.New("hook input is empty")
 	}
 	return value, nil
@@ -740,16 +979,6 @@ func failOpenError(failOpen bool, err error) error {
 		return nil
 	}
 	return err
-}
-
-func statusForError(err error) string {
-	if err == nil {
-		return "ok"
-	}
-	if errors.Is(err, config.ErrNotFound) || errors.Is(err, exec.ErrNotFound) {
-		return "missing"
-	}
-	return "error: " + err.Error()
 }
 
 func writeJSON(writer io.Writer, value any) error {

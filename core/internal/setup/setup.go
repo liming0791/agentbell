@@ -47,15 +47,26 @@ type Setup struct {
 	HomeDir    string
 	ConfigFile string
 	StateDir   string
-	GOOS       string
-	GOARCH     string
-	DryRun     bool
-	Out        io.Writer
+	// CoreExecutable is the selected active Core used by direct-hook adapters.
+	// BridgeExecutable and ActiveGeneration select the version-independent
+	// bridge for adapters whose host products support lifecycle hooks.
+	CoreExecutable   string
+	BridgeExecutable string
+	ActiveGeneration uint64
+	GOOS             string
+	GOARCH           string
+	DryRun           bool
+	Out              io.Writer
 
-	NewCodexAdapter  func() (hookAdapter, error)
-	NewClaudeAdapter func() (hookAdapter, error)
-	NewKimiAdapter   func() (hookAdapter, error)
-	InstallService   func(context.Context) (string, error)
+	NewCodexAdapter     func() (hookAdapter, error)
+	NewClaudeAdapter    func() (hookAdapter, error)
+	NewKimiAdapter      func() (hookAdapter, error)
+	NewOpenCodeAdapter  func() (hookAdapter, error)
+	NewQoderAdapter     func() (hookAdapter, error)
+	NewQoderWorkAdapter func() (hookAdapter, error)
+	NewTraeAdapter      func() (hookAdapter, error)
+	InstallService      func(context.Context) (string, error)
+	CreateBinding       func(context.Context, BindingRequest) (BindingResult, error)
 }
 
 // AgentStatus describes one detected coding agent.
@@ -73,20 +84,44 @@ type LarkCLIStatus struct {
 	Path      string `json:"path,omitempty"`
 }
 
+type BindingRequest struct {
+	ChannelName string
+	Identity    string
+	LarkCLIPath string
+	TTL         time.Duration
+}
+
+type BindingResult struct {
+	Code        string    `json:"code"`
+	ChannelName string    `json:"channelName"`
+	Identity    string    `json:"identity"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+}
+
+type destinationSelection struct {
+	Channel *config.Channel
+	Binding *BindingResult
+}
+
 // Report is the structured result of a setup run.
 type Report struct {
-	DryRun       bool            `json:"dryRun"`
-	Platform     string          `json:"platform"`
-	Architecture string          `json:"architecture"`
-	Agents       []AgentStatus   `json:"agents"`
-	LarkCLI      LarkCLIStatus   `json:"larkCli"`
-	Channel      *config.Channel `json:"channel,omitempty"`
-	ConfigFile   string          `json:"configFile,omitempty"`
-	Backup       string          `json:"backup,omitempty"`
-	CodexHook    string          `json:"codexHook,omitempty"`
-	ClaudeHook   string          `json:"claudeHook,omitempty"`
-	KimiHook     string          `json:"kimiHook,omitempty"`
-	Service      string          `json:"service,omitempty"`
+	DryRun        bool            `json:"dryRun"`
+	Platform      string          `json:"platform"`
+	Architecture  string          `json:"architecture"`
+	Agents        []AgentStatus   `json:"agents"`
+	LarkCLI       LarkCLIStatus   `json:"larkCli"`
+	Channel       *config.Channel `json:"channel,omitempty"`
+	ConfigFile    string          `json:"configFile,omitempty"`
+	Backup        string          `json:"backup,omitempty"`
+	CodexHook     string          `json:"codexHook,omitempty"`
+	ClaudeHook    string          `json:"claudeHook,omitempty"`
+	KimiHook      string          `json:"kimiHook,omitempty"`
+	OpenCodeHook  string          `json:"openCodeHook,omitempty"`
+	QoderHook     string          `json:"qoderHook,omitempty"`
+	QoderWorkHook string          `json:"qoderWorkHook,omitempty"`
+	TraeHook      string          `json:"traeHook,omitempty"`
+	Service       string          `json:"service,omitempty"`
+	Binding       *BindingResult  `json:"binding,omitempty"`
 }
 
 type knownAgent struct {
@@ -94,6 +129,7 @@ type knownAgent struct {
 	binary     string
 	configEnv  string
 	configDirs []string
+	platforms  []string
 }
 
 var knownAgents = []knownAgent{
@@ -102,6 +138,26 @@ var knownAgents = []knownAgent{
 	{id: "kimi", binary: "kimi", configEnv: "KIMI_CODE_HOME", configDirs: []string{".kimi-code", ".kimi"}},
 	{id: "opencode", binary: "opencode", configDirs: []string{".opencode", filepath.Join(".config", "opencode")}},
 	{id: "qoder", binary: "qoder", configDirs: []string{".qoder"}},
+	{
+		id: "qoder-work", binary: "qoderwork",
+		configDirs: []string{
+			".qoderwork",
+			filepath.Join("Applications", "QoderWork.app"),
+			filepath.Join("AppData", "Local", "Programs", "QoderWork", "QoderWork.exe"),
+			filepath.Join("AppData", "Local", "QoderWork", "QoderWork.exe"),
+		},
+		platforms: []string{"darwin", "windows"},
+	},
+	{
+		id: "trae", binary: "trae",
+		configDirs: []string{
+			".trae",
+			filepath.Join("Applications", "TRAE.app"),
+			filepath.Join("AppData", "Local", "Programs", "TRAE", "TRAE.exe"),
+			filepath.Join("AppData", "Local", "TRAE", "TRAE.exe"),
+		},
+		platforms: []string{"darwin", "windows"},
+	},
 }
 
 func (setup *Setup) resolve() error {
@@ -141,17 +197,64 @@ func (setup *Setup) resolve() error {
 	}
 	if setup.NewCodexAdapter == nil {
 		setup.NewCodexAdapter = func() (hookAdapter, error) {
-			return adapter.NewCodexAdapter("", setup.StateDir)
+			value, err := adapter.NewCodexAdapter(
+				setup.CoreExecutable,
+				setup.StateDir,
+			)
+			if err != nil {
+				return nil, err
+			}
+			value.BridgeExecutable = setup.BridgeExecutable
+			value.ActiveGeneration = setup.ActiveGeneration
+			return value, nil
 		}
 	}
 	if setup.NewClaudeAdapter == nil {
 		setup.NewClaudeAdapter = func() (hookAdapter, error) {
-			return adapter.NewClaudeAdapter("", setup.StateDir)
+			value, err := adapter.NewClaudeAdapter(
+				setup.CoreExecutable,
+				setup.StateDir,
+			)
+			if err != nil {
+				return nil, err
+			}
+			value.BridgeExecutable = setup.BridgeExecutable
+			value.ActiveGeneration = setup.ActiveGeneration
+			return value, nil
 		}
 	}
 	if setup.NewKimiAdapter == nil {
 		setup.NewKimiAdapter = func() (hookAdapter, error) {
-			return adapter.NewKimiAdapter("", setup.StateDir)
+			value, err := adapter.NewKimiAdapter(
+				setup.CoreExecutable,
+				setup.StateDir,
+			)
+			if err != nil {
+				return nil, err
+			}
+			value.BridgeExecutable = setup.BridgeExecutable
+			value.ActiveGeneration = setup.ActiveGeneration
+			return value, nil
+		}
+	}
+	if setup.NewOpenCodeAdapter == nil {
+		setup.NewOpenCodeAdapter = func() (hookAdapter, error) {
+			return adapter.NewOpenCodeAdapter(setup.CoreExecutable, setup.StateDir)
+		}
+	}
+	if setup.NewQoderAdapter == nil {
+		setup.NewQoderAdapter = func() (hookAdapter, error) {
+			return adapter.NewQoderAdapter(setup.CoreExecutable, setup.StateDir)
+		}
+	}
+	if setup.NewQoderWorkAdapter == nil {
+		setup.NewQoderWorkAdapter = func() (hookAdapter, error) {
+			return adapter.NewQoderWorkAdapter(setup.CoreExecutable, setup.StateDir)
+		}
+	}
+	if setup.NewTraeAdapter == nil {
+		setup.NewTraeAdapter = func() (hookAdapter, error) {
+			return adapter.NewTraeAdapter(setup.CoreExecutable, setup.StateDir)
 		}
 	}
 	return nil
@@ -195,10 +298,20 @@ func (setup *Setup) Run(ctx context.Context) (*Report, error) {
 	if err := setup.ensureLarkAuth(ctx); err != nil {
 		return report, err
 	}
-	channel, err := setup.selectChat(ctx)
+	selection, err := setup.selectDestination(ctx, report.LarkCLI.Path)
 	if err != nil {
 		return report, err
 	}
+	if selection.Binding != nil {
+		report.Binding = selection.Binding
+		setup.printf("")
+		setup.printf("一次性绑定已创建。请将以下代码作为目标飞书会话中的完整消息发送：")
+		setup.printf("%s", selection.Binding.Code)
+		setup.printf("然后运行：agentbell bind complete --code-stdin")
+		setup.printf("绑定完成后再次运行 `agentbell setup` 安装 Hook 和后台服务。")
+		return report, nil
+	}
+	channel := *selection.Channel
 	report.Channel = &channel
 	backup, err := setup.writeConfig(channel)
 	if err != nil {
@@ -252,6 +365,18 @@ func (setup *Setup) detectAgents() []AgentStatus {
 			status.Adapter = "claude-code"
 		case "kimi":
 			status.Adapter = "kimi-code"
+		case "opencode":
+			status.Adapter = "opencode"
+		case "qoder":
+			status.Adapter = "qoder"
+		case "qoder-work":
+			status.Adapter = "qoder-work"
+		case "trae":
+			status.Adapter = "trae"
+		}
+		if len(agent.platforms) > 0 && !containsString(agent.platforms, setup.GOOS) {
+			result = append(result, status)
+			continue
 		}
 		if _, err := setup.LookPath(agent.binary); err == nil {
 			status.Detected = true
@@ -275,10 +400,67 @@ func (setup *Setup) detectAgents() []AgentStatus {
 					break
 				}
 			}
+			for _, path := range desktopInstallPaths(setup.GOOS, setup.Getenv, agent.id) {
+				if status.Detected {
+					break
+				}
+				if path != "" {
+					if _, err := setup.Stat(path); err == nil {
+						status.Detected = true
+						status.Source = "application"
+					}
+				}
+			}
 		}
 		result = append(result, status)
 	}
 	return result
+}
+
+func desktopInstallPaths(
+	goos string,
+	getenv func(string) string,
+	agentID string,
+) []string {
+	appNames := []string{}
+	executableName := ""
+	switch agentID {
+	case "qoder-work":
+		appNames = []string{"QoderWork.app", "QoderWork CN.app"}
+		executableName = "QoderWork.exe"
+	case "trae":
+		appNames = []string{"TRAE.app", "Trae CN.app"}
+		executableName = "TRAE.exe"
+	default:
+		return nil
+	}
+	switch goos {
+	case "darwin":
+		paths := make([]string, 0, len(appNames))
+		for _, appName := range appNames {
+			paths = append(
+				paths,
+				filepath.Join(string(filepath.Separator), "Applications", appName),
+			)
+		}
+		return paths
+	case "windows":
+		productName := strings.TrimSuffix(executableName, ".exe")
+		paths := []string{}
+		if localAppData := getenv("LOCALAPPDATA"); localAppData != "" {
+			paths = append(
+				paths,
+				filepath.Join(localAppData, "Programs", productName, executableName),
+				filepath.Join(localAppData, productName, executableName),
+			)
+		}
+		if programFiles := getenv("ProgramFiles"); programFiles != "" {
+			paths = append(paths, filepath.Join(programFiles, productName, executableName))
+		}
+		return paths
+	default:
+		return nil
+	}
 }
 
 func (setup *Setup) detectLarkCLI(ctx context.Context, withVersion bool) LarkCLIStatus {
@@ -319,7 +501,7 @@ func (setup *Setup) printPlan(report *Report) {
 	setup.printf("  3. 检查登录状态，未登录时运行 `lark-cli auth login --domain im`")
 	setup.printf("  4. 搜索已有群聊或创建新的通知群")
 	setup.printf("  5. 写入配置文件 %s（已存在时先备份再合并）", setup.ConfigFile)
-	setup.printf("  6. 为检测到的 Codex / Claude Code / Kimi Code 安装 AgentBell 通知钩子")
+	setup.printf("  6. 为检测到的 Codex / Claude Code / Kimi Code / OpenCode / Qoder / QoderWork / TRAE 安装 AgentBell 通知钩子")
 	if managedServicePlatform(setup.GOOS) {
 		setup.printf(
 			"  7. 安装 %s，让通知服务登录后常驻",
@@ -454,15 +636,51 @@ func (setup *Setup) currentAuth(ctx context.Context) authStatus {
 	return status
 }
 
-func (setup *Setup) selectChat(ctx context.Context) (config.Channel, error) {
-	choice, err := setup.Prompter.Select("请选择通知群聊", []string{"搜索已有群聊", "新建通知群"})
+func (setup *Setup) selectDestination(
+	ctx context.Context,
+	larkCLIPath string,
+) (destinationSelection, error) {
+	options := []string{"搜索已有群聊", "新建通知群"}
+	if setup.CreateBinding != nil {
+		options = append(options, "使用一次性绑定码")
+	}
+	choice, err := setup.Prompter.Select("请选择通知群聊", options)
 	if err != nil {
-		return config.Channel{}, err
+		return destinationSelection{}, err
 	}
 	if choice == 1 {
-		return setup.createChat(ctx)
+		channel, err := setup.createChat(ctx)
+		return destinationSelection{Channel: &channel}, err
 	}
-	return setup.searchChat(ctx)
+	if choice == 2 && setup.CreateBinding != nil {
+		channelName, err := setup.Prompter.Input("请输入通知通道名称")
+		if err != nil {
+			return destinationSelection{}, err
+		}
+		channelName = strings.TrimSpace(channelName)
+		if channelName == "" {
+			return destinationSelection{}, errors.New("通知通道名称不能为空")
+		}
+		identityIndex, err := setup.Prompter.Select(
+			"请选择发送身份",
+			[]string{"bot", "user"},
+		)
+		if err != nil {
+			return destinationSelection{}, err
+		}
+		result, err := setup.CreateBinding(ctx, BindingRequest{
+			ChannelName: channelName,
+			Identity:    []string{"bot", "user"}[identityIndex],
+			LarkCLIPath: larkCLIPath,
+			TTL:         10 * time.Minute,
+		})
+		if err != nil {
+			return destinationSelection{}, err
+		}
+		return destinationSelection{Binding: &result}, nil
+	}
+	channel, err := setup.searchChat(ctx)
+	return destinationSelection{Channel: &channel}, err
 }
 
 func (setup *Setup) searchChat(ctx context.Context) (config.Channel, error) {
@@ -631,6 +849,14 @@ func (setup *Setup) installAdapters(ctx context.Context, report *Report) error {
 			displayName, adapterID, newAdapter = "Claude Code", "claude-code", setup.NewClaudeAdapter
 		case "kimi":
 			displayName, adapterID, newAdapter = "Kimi Code", "kimi-code", setup.NewKimiAdapter
+		case "opencode":
+			displayName, adapterID, newAdapter = "OpenCode", "opencode", setup.NewOpenCodeAdapter
+		case "qoder":
+			displayName, adapterID, newAdapter = "Qoder", "qoder", setup.NewQoderAdapter
+		case "qoder-work":
+			displayName, adapterID, newAdapter = "QoderWork", "qoder-work", setup.NewQoderWorkAdapter
+		case "trae":
+			displayName, adapterID, newAdapter = "TRAE", "trae", setup.NewTraeAdapter
 		default:
 			setup.printf("%s：适配器尚未实现（后续切片），跳过", agent.ID)
 			continue
@@ -661,8 +887,16 @@ func (setup *Setup) installAdapters(ctx context.Context, report *Report) error {
 			report.CodexHook = result.HookPath
 		} else if agent.ID == "claude" {
 			report.ClaudeHook = result.HookPath
-		} else {
+		} else if agent.ID == "kimi" {
 			report.KimiHook = result.HookPath
+		} else if agent.ID == "opencode" {
+			report.OpenCodeHook = result.HookPath
+		} else if agent.ID == "qoder" {
+			report.QoderHook = result.HookPath
+		} else if agent.ID == "qoder-work" {
+			report.QoderWorkHook = result.HookPath
+		} else {
+			report.TraeHook = result.HookPath
 		}
 		if _, err := hooks.Verify(); err != nil {
 			return fmt.Errorf("验证 %s 钩子失败：%w", displayName, err)
@@ -672,9 +906,26 @@ func (setup *Setup) installAdapters(ctx context.Context, report *Report) error {
 			setup.printf("Codex 首次运行或 Stop 钩子变化后，请在 `/hooks` 中审核并信任 AgentBell 钩子，然后新建任务")
 		} else if agent.ID == "claude" {
 			setup.printf("Claude Code CLI 与 Desktop 本地会话共享用户级 settings Hook")
-		} else {
+		} else if agent.ID == "kimi" {
 			setup.printf("Kimi Code 仅在会话启动时加载钩子；请关闭旧会话并启动一个新会话")
+		} else if agent.ID == "opencode" {
+			setup.printf("OpenCode 在下次启动时自动加载全局插件")
+		} else if agent.ID == "qoder" {
+			setup.printf("Qoder CLI 与 IDE 共享用户级 settings Hook")
+		} else if agent.ID == "qoder-work" {
+			setup.printf("QoderWork 不支持 Hook 热更新；请完全退出并重新启动 QoderWork")
+		} else {
+			setup.printf("请在 TRAE Hooks 设置中允许 AgentBell Hook 自动在本地运行，再完成一个新任务")
 		}
 	}
 	return nil
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }

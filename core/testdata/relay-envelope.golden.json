@@ -1,0 +1,29 @@
+{
+  "protocolVersion": "1",
+  "teamId": "team-main",
+  "origin": {
+    "id": "origin-wsl-ubuntu",
+    "runtime": "wsl"
+  },
+  "delivery": {
+    "key": "sha256:011b04a92585e2d597ce00aad2ddcf0d77f6aec600e3df93bb2f26aea106a507",
+    "producerKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "sentAt": "2026-07-27T01:02:03.456Z",
+  "nonce": "0123456789abcdef0123456789abcdef",
+  "hop": 0,
+  "event": {
+    "version": "1",
+    "source": "codex",
+    "surface": "cli",
+    "runtime": "wsl",
+    "event": "task.completed",
+    "status": "completed",
+    "occurredAt": "2026-07-27T01:02:02.456Z",
+    "sessionId": "sha256:0123456789abcdef",
+    "idempotencyKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "priority": "normal",
+    "privacyLevel": "metadata-only",
+    "project": "agentbell"
+  }
+}

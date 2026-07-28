@@ -75,3 +75,19 @@ Unified 便于统一模板、通道和审计；Native delegated 可以更快覆�
 原因：该 Hook 在原生审批路由之前触发，`permission_mode=default` 同时覆盖人工审核和
 `auto_review`。通知“需要你审批”必须证明用户真的要采取动作，不能把自动审核过程误报
 成人工待办。恢复条件由项目根 [TODO](../TODO.md) 跟踪。
+
+## D7：M1.5 Desktop / IDE Adapter 范围
+
+状态：已确认（2026-07-26）。
+
+决策：
+
+- QoderWork 作为独立 Adapter/profile 进入 M1.5；官方 schema 复核后确认它使用单个
+  shell command，而 Qoder 使用 exec-form `command + args`，因此只共享通用 JSON
+  合并基础设施，不共享 dialect、配置所有权、检测、重启与卸载。
+- TRAE IDE Adapter 进入 M1.5；本决策不外推到独立的 TRAE Work Desktop 产品。
+- 现有五个 Adapter 的 IDE 表面只进入待实机验收矩阵，不创建开发任务。
+- ZCode 与 WorkBuddy 不进入 M1.5；Kimi Work 继续等待公开生命周期 Hook。
+
+原因：M1.5 只纳入已发现公开、可验证 Hook 且需要独立产品生命周期管理的表面，避免把
+共享协议误当成共享 Adapter，或用调研项扩大交付范围。

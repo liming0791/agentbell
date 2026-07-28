@@ -4,10 +4,15 @@ import { detectEnvironment } from "./detect.mjs";
 import { buildSetupPlan } from "./plan.mjs";
 import {
   coreInstallPath,
-  installCore,
   runCore,
   uninstallCore
 } from "./core.mjs";
+import {
+  listVersions,
+  resolveActiveCore,
+  rollback,
+  upgrade
+} from "./upgrade.mjs";
 
 const require = createRequire(import.meta.url);
 const packageMetadata = require("../package.json");
@@ -20,7 +25,10 @@ Usage:
   agentbell setup --plan
   agentbell install-core [--version <version>]
   agentbell core-path [--version <version>]
-  agentbell <setup|test|version|emit|service|doctor|queue|adapter|uninstall> ...
+  agentbell upgrade [--from <legacy-version>] [--to <version>] [--channel <stable|next>] [--dry-run] [--json]
+  agentbell rollback [--to <version>] [--dry-run] [--json]
+  agentbell versions [--json]
+  agentbell <setup|test|version|emit|service|doctor|queue|settings|policy|bind|bridge|hook|plugin|relay|remote|adapter|uninstall> ...
 
 "setup --plan" prints a local dry-run plan without the Core; plain "setup"
 and "test" are forwarded to the installed Core.
@@ -44,6 +52,88 @@ export function booleanFlagEnabled(options, name) {
     }
   }
   return false;
+}
+
+function optionValue(options, name, fallback) {
+  const index = options.indexOf(name);
+  if (index < 0) {
+    return fallback;
+  }
+  const value = options[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${name} requires a value.`);
+  }
+  return value;
+}
+
+function parseReleaseVersion(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(value);
+  if (!match) {
+    throw new Error(`Invalid AgentBell version: ${value}`);
+  }
+  return {
+    core: match.slice(1, 4).map(Number),
+    prerelease: match[4]?.split(".") || []
+  };
+}
+
+export function compareReleaseVersions(left, right) {
+  const leftVersion = parseReleaseVersion(left);
+  const rightVersion = parseReleaseVersion(right);
+  for (let index = 0; index < 3; index++) {
+    if (leftVersion.core[index] !== rightVersion.core[index]) {
+      return leftVersion.core[index] - rightVersion.core[index];
+    }
+  }
+  if (leftVersion.prerelease.length === 0) {
+    return rightVersion.prerelease.length === 0 ? 0 : 1;
+  }
+  if (rightVersion.prerelease.length === 0) {
+    return -1;
+  }
+  const length = Math.max(
+    leftVersion.prerelease.length,
+    rightVersion.prerelease.length
+  );
+  for (let index = 0; index < length; index++) {
+    const leftPart = leftVersion.prerelease[index];
+    const rightPart = rightVersion.prerelease[index];
+    if (leftPart === rightPart) {
+      continue;
+    }
+    if (leftPart === undefined) {
+      return -1;
+    }
+    if (rightPart === undefined) {
+      return 1;
+    }
+    const leftNumeric = /^\d+$/.test(leftPart);
+    const rightNumeric = /^\d+$/.test(rightPart);
+    if (leftNumeric && rightNumeric) {
+      return Number(leftPart) - Number(rightPart);
+    }
+    if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    }
+    return leftPart.localeCompare(rightPart);
+  }
+  return 0;
+}
+
+function printTransactionResult(result, asJSON) {
+  if (asJSON) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (result.dryRun) {
+    console.log(
+      `AgentBell ${result.operation} plan: ${result.fromVersion || "none"} -> ${result.toVersion}.`
+    );
+    return;
+  }
+  console.log(
+    `AgentBell ${result.activeVersion} is active (generation ${result.generation}).`
+  );
 }
 
 export async function run(args, dependencies = {}) {
@@ -74,7 +164,23 @@ export async function run(args, dependencies = {}) {
     const version = versionIndex >= 0
       ? options[versionIndex + 1]
       : packageMetadata.version;
-    const result = await installCore({ version });
+    const active = await (
+      dependencies.resolveActiveCore || resolveActiveCore
+    )();
+    if (active && active.version !== version) {
+      throw new Error(
+        `AgentBell Core ${active.version} is already active; ` +
+        `use "agentbell upgrade --to ${version}" instead.`
+      );
+    }
+    const result = await (dependencies.upgrade || upgrade)({
+      toVersion: version,
+      channel: "stable",
+      dryRun: false,
+      // A first install has no registered login service yet. setup installs
+      // the stable-bridge service after configuration and Hook installation.
+      restartService: async () => {}
+    });
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -88,6 +194,53 @@ export async function run(args, dependencies = {}) {
     return;
   }
 
+  if (command === "upgrade") {
+    const fromVersion = optionValue(options, "--from", undefined);
+    const result = await (dependencies.upgrade || upgrade)({
+      toVersion: optionValue(options, "--to", packageMetadata.version),
+      ...(fromVersion === undefined ? {} : { fromVersion }),
+      channel: optionValue(options, "--channel", "stable"),
+      dryRun: booleanFlagEnabled(options, "--dry-run")
+    });
+    printTransactionResult(
+      result,
+      booleanFlagEnabled(options, "--json")
+    );
+    return;
+  }
+
+  if (command === "rollback") {
+    const result = await (dependencies.rollback || rollback)({
+      toVersion: optionValue(options, "--to", undefined),
+      dryRun: booleanFlagEnabled(options, "--dry-run")
+    });
+    printTransactionResult(
+      result,
+      booleanFlagEnabled(options, "--json")
+    );
+    return;
+  }
+
+  if (command === "versions") {
+    const unexpected = options.filter((option) => option !== "--json");
+    if (unexpected.length > 0) {
+      throw new Error(`Unsupported versions option: ${unexpected[0]}`);
+    }
+    const result = await (dependencies.listVersions || listVersions)();
+    if (booleanFlagEnabled(options, "--json")) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Active AgentBell: ${result.activeVersion || "none"}`);
+      for (const installed of result.installed) {
+        console.log(
+          `${installed.active ? "*" : " "} ${installed.version}` +
+          `${installed.invalid ? " (invalid)" : ""}`
+        );
+      }
+    }
+    return;
+  }
+
   if ([
     "setup",
     "test",
@@ -95,12 +248,29 @@ export async function run(args, dependencies = {}) {
     "service",
     "doctor",
     "queue",
+    "settings",
+    "policy",
+    "bind",
+    "bridge",
+    "hook",
+    "plugin",
+    "relay",
+    "remote",
     "adapter",
     "version",
     "uninstall"
   ].includes(command)) {
-    const version = packageMetadata.version;
-    const executable = coreInstallPath({ version });
+    const active = await (
+      dependencies.resolveActiveCore || resolveActiveCore
+    )();
+    const resolveCorePath = dependencies.coreInstallPath || coreInstallPath;
+    let version = active?.version || packageMetadata.version;
+    let executable = active?.path || resolveCorePath({ version });
+    if (command === "uninstall" && active &&
+        compareReleaseVersions(packageMetadata.version, active.version) > 0) {
+      version = packageMetadata.version;
+      executable = resolveCorePath({ version });
+    }
     let exitCode;
     try {
       exitCode = await (dependencies.runCore || runCore)(
@@ -121,7 +291,7 @@ export async function run(args, dependencies = {}) {
     }
     if (command === "uninstall" && !booleanFlagEnabled(options, "--dry-run")) {
       const result = await (dependencies.uninstallCore || uninstallCore)({
-        version
+        version: active?.version || version
       });
       if (!booleanFlagEnabled(options, "--json")) {
         console.log(

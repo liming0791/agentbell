@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { detectEnvironment } from "../packages/cli/src/detect.mjs";
 import {
   booleanFlagEnabled,
+  compareReleaseVersions,
   run
 } from "../packages/cli/src/index.mjs";
 
@@ -40,8 +41,23 @@ test("detects the current runtime", () => {
 
 test("prints help", async () => {
   const logs = await captureLogs(() => run(["help"]));
+  const help = logs.join("\n");
 
-  assert.match(logs.join("\n"), /Usage:/);
+  assert.match(help, /Usage:/);
+  for (const command of [
+    "settings",
+    "policy",
+    "bind",
+    "bridge",
+    "hook",
+    "plugin",
+    "relay",
+    "remote",
+    "adapter",
+    "uninstall"
+  ]) {
+    assert.match(help, new RegExp(`\\b${command}\\b`));
+  }
 });
 
 test("prints doctor output and a setup plan", async () => {
@@ -65,10 +81,18 @@ test("parses boolean forwarding flags without unsafe uninstall ambiguity", () =>
   assert.equal(booleanFlagEnabled([], "--dry-run"), false);
 });
 
+test("compares release and prerelease versions for rollback-safe routing", () => {
+  assert.ok(compareReleaseVersions("0.3.0-rc.1", "0.2.0-rc.3") > 0);
+  assert.ok(compareReleaseVersions("0.3.0", "0.3.0-rc.9") > 0);
+  assert.ok(compareReleaseVersions("0.3.0-rc.10", "0.3.0-rc.2") > 0);
+  assert.equal(compareReleaseVersions("0.3.0-rc.1", "0.3.0-rc.1"), 0);
+});
+
 test("removes the managed Core only after successful product uninstall", async () => {
   const forwarded = [];
   const removed = [];
   const dependencies = {
+    resolveActiveCore: async () => null,
     runCore: async (_executable, args) => {
       forwarded.push(args);
       return 0;
@@ -96,6 +120,35 @@ test("removes the managed Core only after successful product uninstall", async (
     /exited with code 9/
   );
   assert.deepEqual(removed, []);
+});
+
+test("uninstall after rollback uses the newer bootstrap Core but removes the active runtime", async () => {
+  const executions = [];
+  const removed = [];
+  await run(["uninstall", "--json"], {
+    resolveActiveCore: async () => ({
+      path: "/managed/bin/0.2.0-rc.3/agentbell",
+      version: "0.2.0-rc.3"
+    }),
+    coreInstallPath: ({ version: selectedVersion }) =>
+      `/managed/bin/${selectedVersion}/agentbell`,
+    runCore: async (executable, args) => {
+      executions.push({ executable, args });
+      return 0;
+    },
+    uninstallCore: async ({ version: selectedVersion }) => {
+      removed.push(selectedVersion);
+      return { removed: true };
+    }
+  });
+
+  assert.equal(executions.length, 1);
+  assert.equal(
+    executions[0].executable,
+    `/managed/bin/${version}/agentbell`
+  );
+  assert.deepEqual(executions[0].args, ["uninstall", "--json"]);
+  assert.deepEqual(removed, ["0.2.0-rc.3"]);
 });
 
 test("routes native commands to a checksum-installed Core", async (context) => {
@@ -141,4 +194,110 @@ test("keeps setup --plan local without an installed Core", async (context) => {
   const logs = await captureLogs(() => run(["setup", "--plan"]));
 
   assert.ok(Array.isArray(JSON.parse(logs[0]).actions));
+});
+
+test("routes upgrade, rollback and versions through the bootstrap transaction layer", async () => {
+  const calls = [];
+  const dependencies = {
+    upgrade: async (request) => {
+      calls.push(["upgrade", request]);
+      return { activeVersion: request.toVersion, generation: 2 };
+    },
+    rollback: async (request) => {
+      calls.push(["rollback", request]);
+      return { activeVersion: request.toVersion, generation: 3 };
+    },
+    listVersions: async () => {
+      calls.push(["versions"]);
+      return { activeVersion: "0.3.0", installed: [] };
+    }
+  };
+  const logs = await captureLogs(async () => {
+    await run(
+      [
+        "upgrade",
+        "--from", "0.2.0-rc.3",
+        "--to", "0.3.0",
+        "--channel", "next",
+        "--dry-run",
+        "--json"
+      ],
+      dependencies
+    );
+    await run(["rollback", "--to", "0.2.9", "--dry-run", "--json"], dependencies);
+    await run(["versions", "--json"], dependencies);
+  });
+  assert.deepEqual(calls, [
+    ["upgrade", {
+      toVersion: "0.3.0",
+      fromVersion: "0.2.0-rc.3",
+      channel: "next",
+      dryRun: true
+    }],
+    ["rollback", { toVersion: "0.2.9", dryRun: true }],
+    ["versions"]
+  ]);
+  assert.equal(JSON.parse(logs[0]).activeVersion, "0.3.0");
+  assert.equal(JSON.parse(logs[1]).activeVersion, "0.2.9");
+  assert.equal(JSON.parse(logs[2]).activeVersion, "0.3.0");
+});
+
+test("install-core initializes the managed active Core and stable bridge", async () => {
+  const calls = [];
+  const logs = await captureLogs(() => run(
+    ["install-core", "--version", "0.3.0"],
+    {
+      resolveActiveCore: async () => null,
+      upgrade: async (request) => {
+        calls.push(request);
+        await request.restartService();
+        return {
+          activeVersion: request.toVersion,
+          generation: 1,
+          corePath: "/managed/bin/0.3.0/agentbell",
+          bridgePath: "/managed/bin/bridge/v1/agentbell-bridge"
+        };
+      }
+    }
+  ));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].toVersion, "0.3.0");
+  assert.equal(calls[0].channel, "stable");
+  assert.equal(calls[0].dryRun, false);
+  assert.equal(typeof calls[0].restartService, "function");
+  assert.equal(JSON.parse(logs[0]).generation, 1);
+
+  await assert.rejects(
+    run(
+      ["install-core", "--version", "0.3.0"],
+      {
+        resolveActiveCore: async () => ({
+          version: "0.2.9",
+          path: "/managed/bin/0.2.9/agentbell"
+        }),
+        upgrade: async () => {
+          throw new Error("must not run");
+        }
+      }
+    ),
+    /already active.*agentbell upgrade --to/i
+  );
+});
+
+test("forwards native commands to the active Core when available", async () => {
+  const calls = [];
+  await run(["settings", "show", "--json"], {
+    resolveActiveCore: async () => ({
+      path: "/managed/bin/0.3.0/agentbell",
+      version: "0.3.0"
+    }),
+    runCore: async (executable, args) => {
+      calls.push({ executable, args });
+      return 0;
+    }
+  });
+  assert.deepEqual(calls, [{
+    executable: "/managed/bin/0.3.0/agentbell",
+    args: ["settings", "show", "--json"]
+  }]);
 });

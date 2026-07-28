@@ -38,3 +38,19 @@ func TestTextOmitsSummaryAndUsesFallbackSource(t *testing.T) {
 		t.Fatalf("unexpected text: %q", text)
 	}
 }
+
+func TestTextUsesM15ProductNames(t *testing.T) {
+	for source, expected := range map[string]string{
+		"qoder-work": "QoderWork",
+		"trae":       "TRAE",
+	} {
+		text := Text(event.Notification{
+			Source: source,
+			Event:  event.EventTaskCompleted,
+			Status: event.StatusCompleted,
+		}, config.Config{})
+		if !strings.Contains(text, expected) {
+			t.Fatalf("%s display name missing from %q", source, text)
+		}
+	}
+}

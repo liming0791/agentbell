@@ -73,3 +73,87 @@ func TestRuntimeProofRejectsUnsupportedOrInvalidData(t *testing.T) {
 		t.Fatal("expected invalid proof error")
 	}
 }
+
+func TestRuntimeProofAcceptsM15Adapters(t *testing.T) {
+	root := t.TempDir()
+	for _, adapterID := range []string{qoderWorkAdapterID, traeAdapterID} {
+		if err := RecordRuntimeProof(
+			root,
+			adapterID,
+			"task.completed",
+			time.Now(),
+		); err != nil {
+			t.Fatalf("%s runtime proof: %v", adapterID, err)
+		}
+	}
+}
+
+func TestRuntimeProofMatchesActivationGeneration(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "hooks.json")
+	configTime := time.Date(2026, 7, 27, 8, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(configPath, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(configPath, configTime, configTime); err != nil {
+		t.Fatal(err)
+	}
+	context := RuntimeProofContext{
+		BridgeProtocol:       1,
+		CoreVersion:          "0.3.0",
+		ActivationGeneration: 7,
+	}
+	if err := RecordRuntimeProofWithContext(
+		root,
+		codexAdapterID,
+		"task.completed",
+		configTime.Add(time.Second),
+		context,
+	); err != nil {
+		t.Fatal(err)
+	}
+	proof, verified := runtimeEventProofAfterConfigAndGeneration(
+		root,
+		codexAdapterID,
+		"task.completed",
+		configPath,
+		7,
+	)
+	if !verified ||
+		proof.Version != 3 ||
+		proof.BridgeProtocol != 1 ||
+		proof.CoreVersion != "0.3.0" ||
+		proof.ActivationGeneration != 7 {
+		t.Fatalf("bridge proof was rejected: %#v verified=%v", proof, verified)
+	}
+	if _, verified := runtimeEventProofAfterConfigAndGeneration(
+		root,
+		codexAdapterID,
+		"task.completed",
+		configPath,
+		8,
+	); verified {
+		t.Fatal("proof from another activation generation was accepted")
+	}
+}
+
+func TestRuntimeProofRejectsIncompleteBridgeContext(t *testing.T) {
+	root := t.TempDir()
+	tests := []RuntimeProofContext{
+		{BridgeProtocol: 1, CoreVersion: "0.3.0"},
+		{BridgeProtocol: 1, ActivationGeneration: 1},
+		{BridgeProtocol: 2, CoreVersion: "0.3.0", ActivationGeneration: 1},
+		{CoreVersion: "0.3.0", ActivationGeneration: 1},
+	}
+	for _, context := range tests {
+		if err := RecordRuntimeProofWithContext(
+			root,
+			codexAdapterID,
+			"task.completed",
+			time.Now(),
+			context,
+		); err == nil {
+			t.Fatalf("invalid bridge context was accepted: %#v", context)
+		}
+	}
+}

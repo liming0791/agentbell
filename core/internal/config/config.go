@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,16 +43,14 @@ func Load(path string) (Config, error) {
 	}
 	defer file.Close()
 
-	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
-	decoder.DisallowUnknownFields()
-	var result Config
-	if err := decoder.Decode(&result); err != nil {
-		return Config{}, fmt.Errorf("parse config: %w", err)
-	}
-	if err := result.Validate(); err != nil {
+	data, err := io.ReadAll(io.LimitReader(file, maximumConfigSize+1))
+	if err != nil {
 		return Config{}, err
 	}
-	return result, nil
+	if len(data) > maximumConfigSize {
+		return Config{}, errors.New("config exceeds 1 MiB")
+	}
+	return decodeConfig(data)
 }
 
 func (config Config) Validate() error {
@@ -119,4 +116,14 @@ func (config Config) EventEnabled(name string) bool {
 		}
 	}
 	return false
+}
+
+func migrateLegacyConfig(config *Config) {
+	if config == nil || config.Notifications.PrivacyLevel != "" {
+		return
+	}
+	config.Notifications.PrivacyLevel = event.PrivacyMetadataOnly
+	if config.Notifications.IncludeSummary {
+		config.Notifications.PrivacyLevel = event.PrivacySummary
+	}
 }

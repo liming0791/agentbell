@@ -1,6 +1,6 @@
 {
   "name": "agentbell",
-  "version": "0.2.0-rc.3",
+  "version": "0.3.0-rc.4",
   "private": true,
   "description": "Cross-CLI Agent notifications delivered through Feishu's official lark-cli.",
   "license": "MIT",
@@ -25,11 +25,14 @@
     "lint": "eslint . --max-warnings 0",
     "pack:check": "npm pack --workspaces --dry-run",
     "perf:emit": "node ./scripts/benchmark-emit.mjs",
+    "perf:m2": "npm run perf:emit && node ./scripts/benchmark-m2.mjs",
     "release:verify": "node ./scripts/verify-release.mjs",
     "setup:plan": "node ./packages/cli/bin/agentbell.mjs setup --plan",
     "smoke:bootstrap": "node ./scripts/smoke-bootstrap.mjs",
+    "smoke:https": "node ./scripts/smoke-https-relay.mjs",
     "test": "node --test",
     "test:coverage": "node ./scripts/check-node-coverage.mjs",
+    "test:migrations": "node ./scripts/check-migrations.mjs",
     "version:set": "node ./scripts/set-version.mjs"
   },
   "devDependencies": {

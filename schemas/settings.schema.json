@@ -1,0 +1,369 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentbell.dev/schemas/settings.schema.json",
+  "title": "AgentBell Settings",
+  "type": "object",
+  "required": [
+    "version",
+    "minCoreVersion",
+    "events",
+    "defaultTemplate",
+    "templates",
+    "quietHours",
+    "policies"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "minCoreVersion": {
+      "type": "string",
+      "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "events": {
+      "$ref": "#/$defs/eventSwitches"
+    },
+    "defaultTemplate": {
+      "$ref": "#/$defs/identifier"
+    },
+    "templates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/template"
+      }
+    },
+    "quietHours": {
+      "$ref": "#/$defs/quietHours"
+    },
+    "policies": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/policy"
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "eventName": {
+      "enum": [
+        "task.completed",
+        "task.failed",
+        "agent.waiting",
+        "approval.required",
+        "session.interrupted",
+        "subagent.completed",
+        "agent.info"
+      ]
+    },
+    "eventSwitches": {
+      "type": "object",
+      "required": [
+        "task.completed",
+        "task.failed",
+        "agent.waiting",
+        "approval.required",
+        "session.interrupted",
+        "subagent.completed",
+        "agent.info"
+      ],
+      "properties": {
+        "task.completed": {
+          "type": "boolean"
+        },
+        "task.failed": {
+          "type": "boolean"
+        },
+        "agent.waiting": {
+          "type": "boolean"
+        },
+        "approval.required": {
+          "type": "boolean"
+        },
+        "session.interrupted": {
+          "type": "boolean"
+        },
+        "subagent.completed": {
+          "type": "boolean"
+        },
+        "agent.info": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "template": {
+      "type": "object",
+      "required": [
+        "id",
+        "body"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "At most 4096 UTF-8 bytes; Core enforces the byte limit."
+        }
+      },
+      "additionalProperties": false
+    },
+    "quietHours": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "",
+            "defer",
+            "drop"
+          ]
+        },
+        "intervals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/quietInterval"
+          }
+        },
+        "bypassEvents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/eventName"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "enabled": {
+            "const": true
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "then": {
+        "required": [
+          "timezone",
+          "action",
+          "intervals"
+        ],
+        "properties": {
+          "timezone": {
+            "minLength": 1
+          },
+          "action": {
+            "enum": [
+              "defer",
+              "drop"
+            ]
+          },
+          "intervals": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "quietInterval": {
+      "type": "object",
+      "required": [
+        "days",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "days": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "mon",
+              "tue",
+              "wed",
+              "thu",
+              "fri",
+              "sat",
+              "sun"
+            ]
+          }
+        },
+        "start": {
+          "type": "string",
+          "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+        },
+        "end": {
+          "type": "string",
+          "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "id",
+        "action"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "match": {
+          "$ref": "#/$defs/policyMatch"
+        },
+        "action": {
+          "$ref": "#/$defs/policyAction"
+        }
+      },
+      "additionalProperties": false
+    },
+    "policyMatch": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/eventName"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "codex",
+              "claude",
+              "opencode",
+              "kimi",
+              "qoder",
+              "qoder-work",
+              "zcode",
+              "workbuddy",
+              "trae",
+              "kimi-work"
+            ]
+          }
+        },
+        "surfaces": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "cli",
+              "tui",
+              "ide",
+              "desktop",
+              "jetbrains",
+              "cloud"
+            ]
+          }
+        },
+        "runtimes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "host",
+              "wsl",
+              "container",
+              "ssh",
+              "vendor-cloud"
+            ]
+          }
+        },
+        "priorities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "normal",
+              "high",
+              "urgent"
+            ]
+          }
+        },
+        "projects": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "policyAction": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "channelIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "templateId": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "$ref": "#/$defs/identifier"
+            }
+          ]
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "enabled"
+          ]
+        },
+        {
+          "required": [
+            "channelIds"
+          ]
+        },
+        {
+          "required": [
+            "templateId"
+          ],
+          "properties": {
+            "templateId": {
+              "$ref": "#/$defs/identifier"
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

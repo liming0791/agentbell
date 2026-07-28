@@ -35,6 +35,22 @@ type fakeSender struct {
 	text  string
 }
 
+type testBackgroundWorker struct {
+	started chan struct{}
+	stopped chan struct{}
+	err     error
+}
+
+func (worker *testBackgroundWorker) Run(ctx context.Context) error {
+	close(worker.started)
+	if worker.err != nil {
+		return worker.err
+	}
+	<-ctx.Done()
+	close(worker.stopped)
+	return nil
+}
+
 type permanentFailure struct{}
 
 func (permanentFailure) Error() string {
@@ -200,6 +216,93 @@ func TestServiceLockRejectsSecondInstance(t *testing.T) {
 	defer first.Release()
 	if _, err := acquireLock(path, time.Minute); err == nil {
 		t.Fatal("expected second lock to fail")
+	}
+}
+
+func TestServiceBackgroundWorkerFailureDoesNotStopLocalQueue(t *testing.T) {
+	queueValue, err := queue.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	enqueue(t, queueValue, "worker-failure-isolated", now)
+	worker := &testBackgroundWorker{
+		started: make(chan struct{}),
+		stopped: make(chan struct{}),
+		err:     errors.New("remote unavailable"),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	serviceDone := make(chan error, 1)
+	serviceValue := Service{
+		Queue: queueValue,
+		LoadConfig: func() (config.Config, error) {
+			return validConfig(), nil
+		},
+		Sender:       &fakeSender{},
+		PollInterval: time.Millisecond,
+		Workers:      []BackgroundWorker{worker},
+	}
+	go func() { serviceDone <- serviceValue.Run(ctx) }()
+	select {
+	case <-worker.started:
+	case <-time.After(time.Second):
+		t.Fatal("background worker did not start")
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		stats, statsErr := queueValue.Stats()
+		if statsErr != nil {
+			t.Fatal(statsErr)
+		}
+		if stats.History == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("local queue stopped after background worker failure")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-serviceDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("service did not stop")
+	}
+}
+
+func TestServiceCancelsBackgroundWorkers(t *testing.T) {
+	queueValue, err := queue.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := &testBackgroundWorker{
+		started: make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	serviceDone := make(chan error, 1)
+	serviceValue := Service{
+		Queue: queueValue,
+		LoadConfig: func() (config.Config, error) {
+			return validConfig(), nil
+		},
+		Sender:       &fakeSender{},
+		PollInterval: time.Millisecond,
+		Workers:      []BackgroundWorker{worker},
+	}
+	go func() { serviceDone <- serviceValue.Run(ctx) }()
+	<-worker.started
+	cancel()
+	select {
+	case <-worker.stopped:
+	case <-time.After(time.Second):
+		t.Fatal("worker was not cancelled")
+	}
+	if err := <-serviceDone; err != nil {
+		t.Fatal(err)
 	}
 }
 

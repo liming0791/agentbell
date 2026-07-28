@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "agentbell",
+  "displayName": "AgentBell",
+  "version": "0.3.0-rc.4",
+  "description": "Send Qoder lifecycle notifications to Feishu through AgentBell and lark-cli.",
+  "author": {
+    "name": "AgentBell contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "notifications",
+    "hooks",
+    "feishu",
+    "lark"
+  ],
+  "skills": "./skills/"
+}

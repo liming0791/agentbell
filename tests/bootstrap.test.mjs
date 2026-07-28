@@ -22,6 +22,12 @@ import {
   resolveDataRoot,
   resolveTarget
 } from "../packages/cli/src/platform.mjs";
+import {
+  activeStatePath,
+  stableBridgePath
+} from "../packages/cli/src/upgrade.mjs";
+
+const WebResponse = globalThis.Response;
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -54,9 +60,21 @@ async function withReleaseServer(binary, checksumValue, callback) {
 }
 
 test("resolves all supported release targets", () => {
-  assert.equal(resolveTarget("win32", "x64").fileName, "agentbell-windows-amd64.exe");
-  assert.equal(resolveTarget("darwin", "arm64").fileName, "agentbell-darwin-arm64");
-  assert.equal(resolveTarget("linux", "x64").fileName, "agentbell-linux-amd64");
+  const windows = resolveTarget("win32", "x64");
+  assert.equal(windows.fileName, "agentbell-windows-amd64.exe");
+  assert.equal(
+    windows.bridgeFileName,
+    "agentbell-bridge-windows-amd64.exe"
+  );
+  const darwin = resolveTarget("darwin", "arm64");
+  assert.equal(darwin.fileName, "agentbell-darwin-arm64");
+  assert.equal(
+    darwin.bridgeFileName,
+    "agentbell-bridge-darwin-arm64"
+  );
+  const linux = resolveTarget("linux", "x64");
+  assert.equal(linux.fileName, "agentbell-linux-amd64");
+  assert.equal(linux.bridgeFileName, "agentbell-bridge-linux-amd64");
   assert.throws(() => resolveTarget("aix", "ppc64"), /does not support/);
 });
 
@@ -243,6 +261,69 @@ test("uses an explicit token only as an Authorization header", async () => {
   }
 });
 
+test("authenticated installs can resolve a draft release by tag", async () => {
+  const binary = Buffer.from("draft-release-binary");
+  const expected = sha256(binary);
+  const checksumsAssetURL =
+    "https://api.github.com/repos/liming0791/agentbell/releases/assets/11";
+  const binaryAssetURL =
+    "https://api.github.com/repos/liming0791/agentbell/releases/assets/12";
+  const requests = [];
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "agentbell-bootstrap-test-")
+  );
+  try {
+    const result = await installCore({
+      version: "0.3.0-rc.2",
+      dataRoot: temporaryRoot,
+      token: "draft-token",
+      fetchImpl: async (url, options) => {
+        requests.push({ url, options });
+        if (url.endsWith("/releases/tags/v0.3.0-rc.2")) {
+          return new WebResponse("missing", { status: 404 });
+        }
+        if (url.endsWith("/releases?per_page=100")) {
+          return WebResponse.json([
+            {
+              tag_name: "v0.3.0-rc.2",
+              draft: true,
+              assets: [
+                { name: "checksums.txt", url: checksumsAssetURL },
+                {
+                  name: "agentbell-linux-amd64",
+                  url: binaryAssetURL
+                }
+              ]
+            }
+          ]);
+        }
+        if (url === checksumsAssetURL) {
+          return new WebResponse(
+            `${expected}  agentbell-linux-amd64\n`
+          );
+        }
+        if (url === binaryAssetURL) {
+          return new WebResponse(binary);
+        }
+        return new WebResponse("unexpected", { status: 500 });
+      },
+      platform: "linux",
+      architecture: "x64"
+    });
+
+    assert.equal(result.reused, false);
+    assert.equal(requests.length, 4);
+    assert.match(requests[0].url, /releases\/tags\/v0\.3\.0-rc\.2$/);
+    assert.match(requests[1].url, /releases\?per_page=100$/);
+    assert.ok(requests.every(
+      ({ options }) =>
+        options.headers.authorization === "Bearer draft-token"
+    ));
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("rejects invalid versions and incomplete checksum manifests", async () => {
   await assert.rejects(
     installCore({ version: "../bad" }),
@@ -279,8 +360,21 @@ test("removes only the requested managed Core version", async (context) => {
     dataRoot: temporaryRoot
   });
   const retainedPath = path.join(temporaryRoot, "retained.txt");
+  const activePath = activeStatePath(temporaryRoot);
+  const bridgePath = stableBridgePath({ dataRoot: temporaryRoot });
   await mkdir(path.dirname(installPath), { recursive: true });
+  await mkdir(path.dirname(bridgePath), { recursive: true });
   await writeFile(installPath, "fake-core");
+  await writeFile(bridgePath, "fake-bridge");
+  await writeFile(activePath, JSON.stringify({
+    schemaVersion: 1,
+    generation: 4,
+    activeVersion: "0.2.0",
+    target: resolveTarget(process.platform, process.arch).id,
+    checksum: sha256("fake-core"),
+    bridgeChecksum: sha256("fake-bridge"),
+    transactionId: "uninstall-test"
+  }));
   await writeFile(retainedPath, "keep");
 
   const result = await uninstallCore({
@@ -289,6 +383,8 @@ test("removes only the requested managed Core version", async (context) => {
   });
   assert.equal(result.removed, true);
   await assert.rejects(readFile(installPath), /ENOENT/);
+  await assert.rejects(readFile(activePath), /ENOENT/);
+  await assert.rejects(readFile(bridgePath), /ENOENT/);
   assert.equal(await readFile(retainedPath, "utf8"), "keep");
 
   const repeated = await uninstallCore({

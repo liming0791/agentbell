@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "adapter": "codex",
+  "hookPath": "/fixture/codex/hooks.json",
+  "command": "'/fixture/agentbell-v1' emit --adapter codex --surface cli --runtime host --stdin --fail-open",
+  "commandWindows": "\"C:\\fixture\\agentbell-v1.exe\" emit --adapter codex --surface cli --runtime host --stdin --fail-open",
+  "installedAt": "2026-01-02T03:04:05Z"
+}

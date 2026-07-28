@@ -2,16 +2,11 @@ import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  releaseArtifacts,
+  releaseTargets
+} from "./build-targets.mjs";
 import { findGo, root } from "./go-tool.mjs";
-
-const targets = [
-  ["windows", "amd64"],
-  ["windows", "arm64"],
-  ["darwin", "amd64"],
-  ["darwin", "arm64"],
-  ["linux", "amd64"],
-  ["linux", "arm64"]
-];
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -34,37 +29,39 @@ const ldflags = [
 
 await mkdir(output, { recursive: true });
 
-for (const [goos, goarch] of targets) {
-  const extension = goos === "windows" ? ".exe" : "";
-  const fileName = `agentbell-${goos}-${goarch}${extension}`;
-  const result = spawnSync(
-    goExecutable,
-    [
-      "build",
-      "-trimpath",
-      "-ldflags",
-      ldflags,
-      "-o",
-      path.join(output, fileName),
-      "./cmd/agentbell"
-    ],
-    {
-      cwd: core,
-      env: {
-        ...process.env,
-        CGO_ENABLED: "0",
-        GOOS: goos,
-        GOARCH: goarch
-      },
-      stdio: "inherit",
-      windowsHide: true
+for (const target of releaseTargets) {
+  for (const artifact of releaseArtifacts(target)) {
+    const result = spawnSync(
+      goExecutable,
+      [
+        "build",
+        "-trimpath",
+        "-ldflags",
+        ldflags,
+        "-o",
+        path.join(output, artifact.fileName),
+        artifact.command
+      ],
+      {
+        cwd: core,
+        env: {
+          ...process.env,
+          CGO_ENABLED: "0",
+          GOOS: target.goos,
+          GOARCH: target.goarch
+        },
+        stdio: "inherit",
+        windowsHide: true
+      }
+    );
+    if (result.error) {
+      throw result.error;
     }
-  );
-  if (result.error) {
-    throw result.error;
+    if (result.status !== 0) {
+      throw new Error(
+        `Failed to build ${artifact.command} for ${target.goos}/${target.goarch}.`
+      );
+    }
+    console.log(`Built ${artifact.fileName}`);
   }
-  if (result.status !== 0) {
-    throw new Error(`Failed to build ${goos}/${goarch}.`);
-  }
-  console.log(`Built ${fileName}`);
 }

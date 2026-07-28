@@ -36,18 +36,20 @@ var validStates = map[State]bool{
 }
 
 type Envelope struct {
-	QueueVersion  int                `json:"queueVersion"`
-	ID            string             `json:"id"`
-	State         State              `json:"state"`
-	Event         event.Notification `json:"event"`
-	Attempts      int                `json:"attempts"`
-	CreatedAt     time.Time          `json:"createdAt"`
-	UpdatedAt     time.Time          `json:"updatedAt"`
-	NextAttemptAt time.Time          `json:"nextAttemptAt,omitempty"`
-	LeaseUntil    time.Time          `json:"leaseUntil,omitempty"`
-	LastError     string             `json:"lastError,omitempty"`
-	ManualRetries int                `json:"manualRetries,omitempty"`
-	LastRetriedAt time.Time          `json:"lastRetriedAt,omitempty"`
+	QueueVersion  int                   `json:"queueVersion"`
+	ID            string                `json:"id"`
+	State         State                 `json:"state"`
+	Event         event.Notification    `json:"event"`
+	Attempts      int                   `json:"attempts"`
+	CreatedAt     time.Time             `json:"createdAt"`
+	UpdatedAt     time.Time             `json:"updatedAt"`
+	NextAttemptAt time.Time             `json:"nextAttemptAt,omitempty"`
+	LeaseUntil    time.Time             `json:"leaseUntil,omitempty"`
+	LastError     string                `json:"lastError,omitempty"`
+	ManualRetries int                   `json:"manualRetries,omitempty"`
+	LastRetriedAt time.Time             `json:"lastRetriedAt,omitempty"`
+	Ledger        []DeliveryLedgerEntry `json:"ledger,omitempty"`
+	Disposition   Disposition           `json:"disposition,omitempty"`
 }
 
 type Item struct {
@@ -232,32 +234,63 @@ func (queue *Queue) Ack(item *Item, now time.Time) error {
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 
-	item.State = StateSucceeded
-	item.UpdatedAt = now.UTC()
-	item.LeaseUntil = time.Time{}
-	item.NextAttemptAt = time.Time{}
-	item.LastError = ""
-	return queue.transition("inflight", "history", item)
+	if err := validateInflightItem(item); err != nil {
+		return err
+	}
+	if item.Ledger != nil {
+		if err := validateDeliveryEnvelope(item.Envelope); err != nil {
+			return fmt.Errorf("invalid delivery ledger: %w", err)
+		}
+		if !deliveryLedgerTerminal(item.Ledger) {
+			return errors.New("cannot acknowledge envelope before all targets are terminal")
+		}
+	}
+	updated := item.Envelope
+	updated.State = StateSucceeded
+	updated.UpdatedAt = now.UTC()
+	updated.LeaseUntil = time.Time{}
+	updated.NextAttemptAt = time.Time{}
+	updated.LastError = ""
+	if err := queue.transitionEnvelope("inflight", "history", item.FileName, updated); err != nil {
+		return err
+	}
+	item.Envelope = updated
+	return nil
 }
 
 func (queue *Queue) Nack(item *Item, cause error, now time.Time, backoff []time.Duration) (State, error) {
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 
-	item.Attempts++
-	item.UpdatedAt = now.UTC()
-	item.LeaseUntil = time.Time{}
-	item.LastError = truncateError(cause)
+	if err := validateInflightItem(item); err != nil {
+		return "", err
+	}
+	if item.Ledger != nil {
+		return "", errors.New("envelope nack is not allowed after targets are resolved")
+	}
+	updated := item.Envelope
+	updated.Attempts++
+	updated.UpdatedAt = now.UTC()
+	updated.LeaseUntil = time.Time{}
+	updated.LastError = truncateError(cause)
 
-	if item.Attempts >= len(backoff) {
-		item.State = StateDead
-		item.NextAttemptAt = time.Time{}
-		return StateDead, queue.transition("inflight", "dead", item)
+	if updated.Attempts >= len(backoff) {
+		updated.State = StateDead
+		updated.NextAttemptAt = time.Time{}
+		if err := queue.transitionEnvelope("inflight", "dead", item.FileName, updated); err != nil {
+			return StateDead, err
+		}
+		item.Envelope = updated
+		return StateDead, nil
 	}
 
-	item.State = StatePending
-	item.NextAttemptAt = now.UTC().Add(backoff[item.Attempts-1])
-	return StatePending, queue.transition("inflight", "pending", item)
+	updated.State = StatePending
+	updated.NextAttemptAt = now.UTC().Add(backoff[updated.Attempts-1])
+	if err := queue.transitionEnvelope("inflight", "pending", item.FileName, updated); err != nil {
+		return StatePending, err
+	}
+	item.Envelope = updated
+	return StatePending, nil
 }
 
 func (queue *Queue) RecoverExpired(now time.Time) (int, error) {
@@ -447,7 +480,9 @@ func (queue *Queue) listUnlocked(state State) ([]Item, error) {
 			}
 			continue
 		}
-		if envelope.QueueVersion != QueueVersion || envelope.ID == "" {
+		if envelope.QueueVersion != QueueVersion ||
+			envelope.ID == "" ||
+			validateDeliveryEnvelope(envelope) != nil {
 			if quarantineErr := queue.quarantine(directory, entry.Name()); quarantineErr != nil {
 				return nil, quarantineErr
 			}
@@ -477,7 +512,10 @@ func (queue *Queue) writeNew(state, fileName string, envelope Envelope) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	return queue.write(destination, envelope)
+}
 
+func (queue *Queue) write(destination string, envelope Envelope) error {
 	value, err := json.MarshalIndent(envelope, "", "  ")
 	if err != nil {
 		return err

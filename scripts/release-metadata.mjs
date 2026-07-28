@@ -8,6 +8,10 @@ function argument(name, fallback) {
 }
 
 const directory = path.resolve(argument("--directory", "artifacts/core"));
+const includeDirectoryValue = argument("--include-directory");
+const includeDirectories = includeDirectoryValue
+  ? [path.resolve(includeDirectoryValue)]
+  : [];
 const version = argument("--version", "dev");
 const commit = argument("--commit", "none");
 const signatureStatus = argument("--signature-status", "technical-preview");
@@ -16,14 +20,24 @@ if (signatureStatus !== "technical-preview") {
     `Unsupported signature status ${signatureStatus}; signed release jobs are not implemented.`
   );
 }
-const files = (await readdir(directory))
-  .filter((name) => name.startsWith("agentbell-"))
-  .sort();
+const fileLocations = new Map();
+for (const sourceDirectory of [directory, ...includeDirectories]) {
+  for (const fileName of await readdir(sourceDirectory)) {
+    if (!fileName.startsWith("agentbell-")) {
+      continue;
+    }
+    if (fileLocations.has(fileName)) {
+      throw new Error(`Duplicate release artifact name ${fileName}.`);
+    }
+    fileLocations.set(fileName, path.join(sourceDirectory, fileName));
+  }
+}
+const files = [...fileLocations.keys()].sort();
 const artifacts = [];
 const checksumLines = [];
 
 for (const fileName of files) {
-  const value = await readFile(path.join(directory, fileName));
+  const value = await readFile(fileLocations.get(fileName));
   const sha256 = createHash("sha256").update(value).digest("hex");
   checksumLines.push(`${sha256}  ${fileName}`);
   artifacts.push({

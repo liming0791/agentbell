@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   chmod,
+  lstat,
   mkdir,
   readFile,
   rename,
@@ -13,6 +14,11 @@ import { spawn } from "node:child_process";
 import { URL } from "node:url";
 
 import { resolveDataRoot, resolveTarget } from "./platform.mjs";
+import {
+  activeStatePath,
+  stableBridgePath
+} from "./upgrade.mjs";
+import { fetchGitHubReleaseMetadata } from "./github-release.mjs";
 
 const defaultReleaseBase =
   "https://github.com/liming0791/agentbell/releases";
@@ -84,14 +90,12 @@ async function resolveReleaseAssets({
     };
   }
 
-  const metadataURL = `${repositoryAPI}/releases/tags/v${version}`;
-  const metadataResponse = await fetchRequired(
+  const metadata = await fetchGitHubReleaseMetadata({
     fetchImpl,
-    metadataURL,
+    repositoryAPI,
+    tagName: `v${version}`,
     token,
-    "application/vnd.github+json"
-  );
-  const metadata = await metadataResponse.json();
+  });
   if (!Array.isArray(metadata.assets)) {
     throw new Error(`GitHub release v${version} returned no asset list.`);
   }
@@ -264,6 +268,35 @@ export async function uninstallCore({
   if (path.dirname(installDirectory) !== versionsRoot) {
     throw new Error("Refusing to remove an AgentBell Core path outside the managed versions root.");
   }
+  for (const [candidate, label] of [
+    [root, "AgentBell data root"],
+    [versionsRoot, "AgentBell versions root"],
+    [installDirectory, "managed Core version directory"]
+  ]) {
+    try {
+      if ((await lstat(candidate)).isSymbolicLink()) {
+        throw new Error(`${label} must not be a symbolic link.`);
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+  const activePath = activeStatePath(root);
+  let removeActiveRuntime = false;
+  try {
+    const active = JSON.parse(await readFile(activePath, "utf8"));
+    if (!active || active.schemaVersion !== 1 ||
+        typeof active.activeVersion !== "string") {
+      throw new Error("AgentBell active state is invalid.");
+    }
+    removeActiveRuntime = active.activeVersion === version;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
   let removed = false;
   try {
     const info = await stat(installDirectory);
@@ -274,6 +307,10 @@ export async function uninstallCore({
     }
   }
   await rm(installDirectory, { recursive: true, force: true });
+  if (removeActiveRuntime) {
+    await rm(activePath, { force: true });
+    await rm(stableBridgePath({ dataRoot: root, platform }), { force: true });
+  }
   return {
     path: installPath,
     version,
