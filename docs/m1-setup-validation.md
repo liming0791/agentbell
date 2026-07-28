@@ -94,9 +94,11 @@ Codex/Claude Code/Kimi Code Go Adapter、三平台登录服务和产品级统一
 
 ## M1 Adapter 与跨平台服务补齐
 
-- Claude Code Go Adapter 结构化合并用户级 `settings.json`，使用绝对 Core 路径和
-  exec-form 参数数组，覆盖 Stop/StopFailure/Notification/PermissionRequest；安装、
-  重复安装、静态验证、runtime proof、精确卸载和三平台路径 fixture 已自动化。
+- Claude Code Go Adapter 结构化合并用户级 `settings.json`；安装、重复安装、静态
+  验证、runtime proof、精确卸载和三平台路径 fixture 已自动化。M1 当时按四事件
+  exec-form 实现，M2 实机发现旧版本会因未知事件丢弃整组 Hook，当前实现已改为按检测
+  版本协商事件集与 shell/exec-form 命令形态；以 [兼容矩阵](./compatibility.md) 和
+  [运维文档](./operations.md#安装-claude-code-adapter) 为准。
 - 官方资料确认 Claude Code CLI 与 Desktop Code tab 本地会话共享用户级 settings 与
   Hooks；实现因此复用一个 Adapter。Desktop 云会话不计入本机支持范围。
 - Codex Adapter 在无 CLI PATH、但存在共享 `CODEX_HOME` 时也能检测 Desktop 安装；

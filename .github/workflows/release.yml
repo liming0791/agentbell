@@ -10,6 +10,14 @@ on:
         description: Existing version tag to release (for example, v0.2.0)
         required: true
         type: string
+      action:
+        description: Stage and verify a draft, or finalize an existing verified draft
+        required: true
+        default: stage
+        type: choice
+        options:
+          - stage
+          - finalize
 
 permissions:
   contents: read
@@ -20,6 +28,7 @@ concurrency:
 
 jobs:
   build-core:
+    if: github.event_name == 'push' || inputs.action == 'stage'
     name: Build native Core, bridge and signed plugins
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -235,12 +244,12 @@ jobs:
           path: artifacts/npm/*.tgz
           if-no-files-found: error
 
-  publish:
-    name: Publish Core, bridge, npm packages and GitHub release
+  stage-draft:
+    if: github.event_name == 'push' || inputs.action == 'stage'
+    name: Stage and verify the draft GitHub release
     needs: build-core
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: npm-publish
     permissions:
       contents: write
       id-token: write
@@ -317,18 +326,11 @@ jobs:
               --verify-tag \
               "${prerelease_args[@]}"
           fi
-          echo "AGENTBELL_RELEASE_MUTABLE=true" >> "$GITHUB_ENV"
-
-      - name: Use Node.js 24 for trusted publishing
+      - name: Use Node.js 24
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org/
           package-manager-cache: false
-
-      - name: Ensure an OIDC-capable npm CLI
-        if: vars.NPM_PUBLISH_ENABLED == 'true'
-        run: npm install --global "npm@^11.5.1"
 
       - name: Install dependencies
         run: npm ci
@@ -382,8 +384,146 @@ jobs:
             --manifest "$data_root/npm-downloads/release-manifest.json" \
             --version "$version"
 
+      - name: Leave the verified release as a draft
+        run: |
+          echo "Draft Release $RELEASE_TAG passed staged asset smoke."
+          echo "It remains unpublished until a manual finalize action re-verifies and publishes it."
+
+  finalize-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'finalize'
+    name: Re-verify and publish the draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm-publish
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Require finalize to run from the release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]; then
+            echo "Finalize must run from refs/tags/$RELEASE_TAG; got $GITHUB_REF."
+            echo "Select the existing tag as the workflow ref."
+            exit 1
+          fi
+
+      - name: Require an existing draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing_is_draft="$(
+            gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft
+          )"
+          if [ "$existing_is_draft" != "true" ]; then
+            echo "Finalize requires an existing draft Release."
+            exit 1
+          fi
+
+      - name: Require npm trusted publishing to be enabled
+        shell: bash
+        run: |
+          if [ "${{ vars.NPM_PUBLISH_ENABLED }}" != "true" ]; then
+            echo "NPM_PUBLISH_ENABLED must be true before finalizing a Release."
+            echo "The verified GitHub Release remains a draft."
+            exit 1
+          fi
+
+      - name: Use Node.js 24 for trusted publishing
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+          package-manager-cache: false
+
+      - name: Ensure an OIDC-capable npm CLI
+        run: npm install --global "npm@^11.5.1"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Re-download the final draft assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release
+          gh release download "$RELEASE_TAG" --dir artifacts/release
+
+      - name: Verify draft metadata against the selected tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          commit="$(git rev-parse HEAD)"
+          jq -e \
+            --arg version "$version" \
+            --arg commit "$commit" \
+            '.schemaVersion == 1 and
+             .version == $version and
+             .commit == $commit and
+             .signatureStatus == "technical-preview"' \
+            artifacts/release/release-manifest.json >/dev/null
+          (
+            cd artifacts/release
+            sha256sum --check checksums.txt
+          )
+
+      - name: Re-verify the draft GitHub release
+        shell: bash
+        env:
+          AGENTBELL_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          data_root="${RUNNER_TEMP}/agentbell-finalize-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$data_root" in
+            "${RUNNER_TEMP}/agentbell-finalize-smoke-"*) ;;
+            *) echo "Unsafe release smoke path: $data_root"; exit 1 ;;
+          esac
+          rm -rf -- "$data_root"
+          mkdir -p "$data_root"
+          trap 'rm -rf -- "$data_root"' EXIT
+          export AGENTBELL_DATA_DIR="$data_root"
+
+          node packages/cli/bin/agentbell.mjs install-core --version "$version"
+          installed_core="$(
+            node packages/cli/bin/agentbell.mjs core-path --version "$version"
+          )"
+          "$installed_core" version --json
+          node packages/cli/bin/agentbell.mjs bridge doctor --json
+
+          shopt -s nullglob
+          plugin_archives=(artifacts/release/agentbell-plugin-*.tar.gz)
+          if [ "${#plugin_archives[@]}" -ne 5 ]; then
+            echo "Expected exactly five final plugin archives."
+            exit 1
+          fi
+          for archive in "${plugin_archives[@]}"; do
+            archive_name="${archive##*/}"
+            plugin_root="$data_root/plugin-${archive_name%.tar.gz}"
+            mkdir -p "$plugin_root"
+            tar -xzf "$archive" -C "$plugin_root" --strip-components=1
+            "$installed_core" plugin verify "$plugin_root" --json
+          done
+
+          node scripts/smoke-npm-packages.mjs \
+            --cli "artifacts/release/agentbell-cli-$version.tgz" \
+            --hook-runtime "artifacts/release/agentbell-hook-runtime-$version.tgz" \
+            --checksums "artifacts/release/checksums.txt" \
+            --manifest "artifacts/release/release-manifest.json" \
+            --version "$version"
+
       - name: Publish npm packages
-        if: vars.NPM_PUBLISH_ENABLED == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -394,8 +534,8 @@ jobs:
           fi
 
           shopt -s nullglob
-          hook_archives=(artifacts/npm/agentbell-hook-runtime-*.tgz)
-          cli_archives=(artifacts/npm/agentbell-cli-*.tgz)
+          hook_archives=(artifacts/release/agentbell-hook-runtime-*.tgz)
+          cli_archives=(artifacts/release/agentbell-cli-*.tgz)
           if [ "${#hook_archives[@]}" -ne 1 ] || [ "${#cli_archives[@]}" -ne 1 ]; then
             echo "Expected exactly one final tgz for each npm package."
             exit 1
@@ -426,18 +566,5 @@ jobs:
           publish_or_verify "@agentbell/hook-runtime" "${hook_archives[0]}"
           publish_or_verify "@agentbell/cli" "${cli_archives[0]}"
 
-      - name: Record disabled npm registry publishing
-        if: vars.NPM_PUBLISH_ENABLED != 'true'
-        run: |
-          echo "npm registry publishing is disabled until @agentbell ownership and trusted publishing are configured."
-          echo "The verified npm tgz archives will still be attached to the GitHub Release."
-
       - name: Publish the completed GitHub release
         run: gh release edit "$RELEASE_TAG" --draft=false
-
-      - name: Return an incomplete release to draft
-        if: failure() && !cancelled() && env.AGENTBELL_RELEASE_MUTABLE == 'true'
-        run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" --draft=true
-          fi

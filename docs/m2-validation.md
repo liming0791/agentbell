@@ -4,10 +4,10 @@
 
 | 项目 | 结论 |
 | --- | --- |
-| 记录日期 | 2026-07-27 |
+| 记录日期 | 2026-07-28 |
 | 本地实现 | P0～P6 自动化与本地门禁已实现 |
 | 发布状态 | 未发布，仍为 Technical Preview / Pilot |
-| M2 退出结论 | **未通过**：真实 Release、三平台和跨主机实机证据尚未产生 |
+| M2 退出结论 | **未通过**：真实 Release、三平台完整矩阵和独立跨主机实机证据尚未产生 |
 
 本台账只记录可复现证据，不把 mock、交叉编译或自动 fixture 描述成实机通过。Adapter
 等级继续由 `docs/adapter-contract.md` 的产品实机矩阵决定。
@@ -24,15 +24,18 @@
 | M2-501～506 Relay/Remote | `relay/`、`remote/`、`remoteconfig/`、`secretstore/`、`app/remote*_test.go`、`scripts/smoke-https-relay.mjs` | 自动测试、macOS Host→Linux container stdio 与隔离 Linux TLS/HTTPS E2E 通过；独立跨主机到飞书待验 |
 | M2-601 doctor | `doctorSchemaVersion=1`、顶层 doctor golden、bridge doctor、connector runtime proof tests | 本地通过；输出脱敏 |
 | M2-602 性能/压力 | stable bridge Hook p95、Relay/32 路 fan-out/queue benchmark、96 durable item stress gate | 本地通过 |
-| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地通过；Actions run 30235694088 的 13 个 job 全绿 |
+| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地通过；Actions run 30333419935 在候选 `964a09f` 上 13/13 job 全绿 |
 | M2-604 实机矩阵 | 下表 | 未通过 |
 | M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | workflow 已接线且本地旧 Release asset/TLS smoke 通过；真实新 RC 未运行 |
 
-当前 Release 候选还增加了四个不可逆发布前门禁：上一 Release lifecycle 必须实际执行
+当前 Release 候选还增加了两段式人工发布闸门和四个不可逆发布前门禁：Tag push 或手动
+`stage` 只生成并复验 Draft，必须从同一 Tag 手动 `finalize` 才能进入 npm/公开发布；
+上一 Release lifecycle 必须实际执行
 产品卸载与 bootstrap Core 清理并验证默认保留项；两个最终 npm tgz 必须进入
-checksums/release manifest；publish job 必须从 draft Release 下载并安装 smoke 这两个
-tgz；已公开的同 tag Release 不允许 `--clobber` 或在失败补偿中退回 draft。npm registry
-不提供两个包的跨包原子事务，首包成功、次包失败时仍需以同一版本重跑补齐，不能把该
+checksums/release manifest；`stage` 和 `finalize` 都必须从 draft Release 下载并安装
+smoke 这两个 tgz；已公开的同 tag Release 不允许 `--clobber` 或在失败补偿中退回 draft。
+npm registry 不提供两个包的跨包原子事务，首包成功、次包失败时仍需以同一版本重跑
+补齐，不能把该
 补偿模型描述成原子发布；重跑只在已发布版本的 registry `dist.integrity` 与最终 tgz
 完全一致时跳过。上述工作流门禁仍需由真实新 RC 运行产生最终证据。
 
@@ -44,6 +47,15 @@ tgz；已公开的同 tag Release 不允许 `--clobber` 或在失败补偿中退
 - `go test -race ./... -count=1` 全包通过；
 - migration fixture、八份版本 manifest、一致性与 npm workspace pack 预检通过；
 - Windows/macOS/Linux 的 amd64/arm64 Core 与 stable bridge 共 12 个二进制构建通过。
+
+2026-07-28 的 [Actions run 30332294570](https://github.com/liming0791/agentbell/actions/runs/30332294570)
+在候选 `41bb573` 上由 Windows runner 发现 `remoteconfig` 原子 sidecar 覆盖仍直接使用
+`os.Rename`，目标已存在时返回 `ACCESS_DENIED`。修复没有把失败改成成功或删除目标文件：
+Windows 现使用 `MoveFileEx` 的 `REPLACE_EXISTING | WRITE_THROUGH`，其他平台继续使用
+`os.Rename`。针对性测试、Windows amd64 交叉编译和完整本地 `npm run ci` 通过后，
+候选 `964a09f` 的 [Actions run 30333419935](https://github.com/liming0791/agentbell/actions/runs/30333419935)
+全部 13 个 job 通过；Draft PR #4 保持 CLEAN。该证据关闭 M2-603 的本轮回归，不等于
+Windows 实机服务、WSL host-pull 或产品 Hook 验收。
 
 ## Linux Container 的真实 Release lifecycle uninstall
 
@@ -276,8 +288,8 @@ user 模式、多通道策略或后台 service 投递。
 
 ## macOS 产品 Hook 的当前候选复验
 
-2026-07-27 将当前 `0.3.0-rc.1` 受管候选部署到 stable bridge/版本目录后，在 macOS
-26.4 arm64 上复验已安装产品：
+2026-07-27～28 将当前 `0.3.0-rc.1` 受管候选部署到 stable bridge/版本目录后，在
+macOS 26.4 arm64 上复验已安装产品：
 
 - Kimi Code 使用安装后的新 CLI 会话产生 `task.completed`，`diagnose` 的
   `runtimeVerified` 为 true；
@@ -327,7 +339,7 @@ npm run perf:m2
 | 飞书 user/bot 一次性绑定 | 既有 bot 通道直接发送通过；一次性绑定与 user 模式待验 | 待验 | 待验 | Host 绑定后复用，待验 |
 | 设置/模板/免打扰/多通道 | 待验 | 待验 | 待验 | Host policy，待验 |
 | 安装、升级、自动回滚 | 真实 M1→本地候选升级通过；自动回滚仅自动故障测试 | 待验 | 待验 | shim 独立升级，待验 |
-| Codex/Claude/Kimi stable Hook | 待验 | 待验 | 待验 | 按产品运行位置待验 |
+| Codex/Claude/Kimi stable Hook | Codex 0.146、Claude Code 2.0.19、Kimi Code 均由新任务/会话取得 generation 2 `task.completed` proof；Desktop/IDE Surface 矩阵仍待验 | 待验 | 待验 | 按产品运行位置待验 |
 | 登录服务重启/断网恢复 | LaunchAgent 迁移重启与后台投递通过；断网待验 | 待验 | 待验 | 待验 |
 | WSL host-pull，无 listener | 不适用 | 待验 | 不适用 | 待验 |
 | SSH strict host-key + tunnel | 可作 Host，待验 | 可作 Host，待验 | 可作 Host，待验 | 待验 |

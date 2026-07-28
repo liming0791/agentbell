@@ -1,6 +1,6 @@
 # AgentBell 兼容矩阵
 
-更新时间：2026-07-26。产品能力变化很快；每次发布 AgentBell 适配器前必须重新跑版本探测和端到端测试。
+更新时间：2026-07-28。产品能力变化很快；每次发布 AgentBell 适配器前必须重新跑版本探测和端到端测试。
 
 ## 等级说明
 
@@ -15,13 +15,13 @@
 
 | 产品 | Surface | 官方入口 | 关键事件 | 平台/范围 | 当前等级 | 首期动作 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Codex | CLI | `hooks.json`、插件 Hook | `Stop` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 0.146 Stop 黑盒复验通过（2026-07-25），Windows/Linux 实机验收跳过 |
+| Codex | CLI | `hooks.json`、插件 Hook | `Stop` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 0.146 已完成 stable bridge 精确信任、新 CLI 任务和当前 generation runtime proof（2026-07-28），Windows/Linux 实机验收待补 |
 | Codex | ChatGPT Desktop 本地代码会话 | 与 CLI 共享 Codex 配置层和 Hook | `Stop` | 以厂商支持平台为准；仅本地会话 | B | 与 CLI 共用 Go Adapter；Hook 重排后须重新信任并分叉/新建任务，macOS 已定位旧任务不热加载 |
-| Claude Code | CLI | settings Hook、插件 Hook | 按版本协商：基线 `Stop`/`Notification`，新版本逐步增加 `PermissionRequest`/`StopFailure` | Windows/macOS/Linux | B | Go Adapter 已实现版本化事件/命令迁移并通过三平台 fixture；Windows/Linux 实机验收跳过 |
+| Claude Code | CLI | settings Hook、插件 Hook | 按版本协商：基线 `Stop`/`Notification`，新版本逐步增加 `PermissionRequest`/`StopFailure` | Windows/macOS/Linux | B | Go Adapter 已实现版本化事件/命令迁移并通过三平台 fixture；macOS 2.0.19 兼容 Hook 已取得当前 generation runtime proof（2026-07-28），其 `defaultMode=auto` 宿主限制仍需显式诊断；Windows/Linux 实机验收待补 |
 | Claude Code | Desktop Code tab | 与 CLI 共享 settings、Hooks 和插件 | 同上 | Windows/macOS/Linux beta；本地会话 | B | 与 CLI 共用用户级 Go Adapter；Desktop 本地会话实机验收跳过 |
 | OpenCode | CLI/TUI | JS/TS/npm 插件事件 | `session.idle`、`session.error`、`permission.asked` | Windows/macOS/Linux | B | Go Adapter 已实现（全局插件模式）；Windows/Linux 实机验收跳过 |
 | OpenCode | Desktop | 配置适用于 Desktop，插件可订阅 Session 事件 | 同上 | Windows/macOS/Linux | B | 与 CLI 共用 Go Adapter；实机验收跳过 |
-| Kimi Code | CLI | TOML Hook、`kimi.plugin.json` | `Stop`、`StopFailure`、`PermissionRequest` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 实机验收通过（2026-07-25），Windows/Linux 实机验收跳过；`Notification` 语义尚未完成验收，不声明支持 |
+| Kimi Code | CLI | TOML Hook、`kimi.plugin.json` | `Stop`、`StopFailure`、`PermissionRequest` | Windows/macOS/Linux | B | Go Adapter 已实现；macOS 新会话已取得 stable bridge 当前 generation runtime proof（2026-07-27），Windows/Linux 实机验收待补；`Notification` 语义尚未完成验收，不声明支持 |
 | Qoder | CLI/IDE/JetBrains 插件 | 共享 `settings.json` Hook、插件 Hook | `Stop`、`PostToolUseFailure` | CLI 三平台；IDE/JB 以厂商平台为准 | B | Go Adapter 已实现（claude-json-hooks dialect）；Windows/Linux 实机验收跳过 |
 | QoderWork | Desktop | 独立 settings profile shell-command Hook；国际版 `~/.qoderwork/settings.json`，CN 版 `~/.qoderworkcn/settings.json` | `Stop`、`PostToolUseFailure`、`PermissionRequest` | Windows/macOS | B | M1.5 Go Adapter 已实现；QoderWork CN 0.9.12 / macOS 26.4 完成与后台发送黑盒通过（2026-07-26），失败和 Windows 矩阵待验 |
 | TRAE IDE | IDE | 独立 Hook profile shell-command Hook；国际版 `~/.trae/hooks.json`，CN 版 `~/.trae-cn/hooks.json` | `Notification.idle_prompt`、`Notification.permission_prompt` | Windows/macOS | B | M1.5 Go Adapter 已实现；TRAE CN 3.3.79 / macOS 26.4 单 Notification 完成与后台发送黑盒通过（2026-07-26），需启用全局 Hooks 并选择本地自动运行；授权和 Windows 矩阵待验 |
@@ -39,19 +39,20 @@
 
 ## 实际交付状态
 
-机器可读 catalog 中所有可接入产品当前均为 `pilot`。Codex 已完成 Core Adapter
-实现、生命周期 conformance fixture 和跨平台 CI，并在 macOS 使用 ChatGPT.app
-内置 Codex 0.146 完成 CLI Stop 黑盒复验。Desktop 已确认共享
-`~/.codex/hooks.json`，但非托管 Hook 的位置化信任和任务启动快照仍有稳定性约束，
-因此不把本次 Desktop 结果升级为 Verified。
+机器可读 catalog 中所有可接入产品当前均为 `pilot`。Codex 已完成 Core Adapter、
+生命周期 conformance fixture 和跨平台 CI，并在 macOS 使用 ChatGPT.app 内置
+Codex 0.146 对 stable bridge Hook 逐项信任后，以全新 CLI 任务取得当前 generation 的
+`task.completed` runtime proof。Desktop 已确认共享 `~/.codex/hooks.json`，但非托管
+Hook 的位置化信任、任务启动快照和 Desktop/IDE Surface 实机矩阵仍有稳定性约束，
+因此不把本次 CLI 结果升级为 Verified。
 Claude Code 已完成共享 user-settings Go Adapter、三平台 conformance fixture、
 CLI/Desktop 配置复用和版本化 Hook 事件/命令迁移；未知或 `<2.0.45` 版本保守安装
 `Stop`/`Notification`，`2.0.45`、`2.1.78`、`2.1.139` 分别解锁
 `PermissionRequest`、`StopFailure` 和 exec-form `args`。2.0.19 在
 `permissions.defaultMode=auto` 时会抑制全部 settings Hook；Adapter 只诊断，不改变
-用户审批策略。Kimi Code 已完成 Go Adapter
-实现与 macOS CLI 实机验收
-（2026-07-25）。OpenCode 已完成全局插件 Go Adapter 实现（`opencode-plugin-events`
+用户审批策略；macOS 兼容 settings 迁移已备份真实配置，并由另一个真实任务取得当前
+generation runtime proof。Kimi Code 已完成 Go Adapter，并由 macOS 新 CLI 会话取得
+stable bridge 当前 generation runtime proof。OpenCode 已完成全局插件 Go Adapter 实现（`opencode-plugin-events`
 dialect，事件 `session.idle`/`session.error`/`permission.asked`），CLI/TUI/Desktop
 共享同一插件文件；Qoder 已完成用户级 settings Go Adapter 实现（`claude-json-hooks`
 dialect，事件 `Stop`/`PostToolUseFailure`），CLI/IDE/JetBrains 共享配置。

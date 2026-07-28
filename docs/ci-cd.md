@@ -67,7 +67,8 @@ npm run release:verify -- v0.3.0-rc.1
 
 ## Release 流水线
 
-`.github/workflows/release.yml` 的顺序固定为：
+`.github/workflows/release.yml` 使用同一 Tag 上的两个独立动作。推送 Tag 或手动选择
+`stage` 时固定执行：
 
 ```text
 tag/manifest 校验
@@ -82,6 +83,15 @@ tag/manifest 校验
 -> GitHub artifact attestation（仓库能力允许时）
 -> draft GitHub Release（已公开的同 tag Release 禁止覆盖）
 -> 从 draft Release API 下载、校验、安装 Core/bridge，复验插件并安装 smoke 最终 npm tgz
+-> 保持 Draft，不发布 npm，不公开 GitHub Release
+```
+
+维护者检查 Draft 和 stage Actions 证据后，必须从同一 Tag 手动选择 `finalize`：
+
+```text
+确认目标仍是 Draft 且 NPM_PUBLISH_ENABLED=true
+-> 从 Draft 重新下载全部最终资产
+-> 再次安装 Core/bridge、复验五个插件和两个 npm tgz
 -> npm publish
 -> 发布完整 GitHub Release
 ```
@@ -112,9 +122,10 @@ OIDC/repository/tag workflow identity 做 Cosign keyless 签名。workflow 在�
 阻止不可逆的 npm 发布和 Release 公开。
 
 两个 npm tgz 在 build job 中只生成一次，并在 release metadata 中记录 SHA-256 和
-大小。publish job 从 draft Release 重新下载这两个精确 tgz，校验 checksum/manifest，
-安装到隔离前缀，并分别执行 CLI help 和 Hook runtime Stop fixture；通过后才允许
-`npm publish`。npm registry 不支持两个包的跨包原子事务：若第一个 publish 成功后第二个
+大小。`stage` 和后续手动 `finalize` 都从 draft Release 重新下载这两个精确 tgz，
+校验 checksum/manifest，安装到隔离前缀，并分别执行 CLI help 和 Hook runtime Stop
+fixture；`finalize` 复验通过后才允许 `npm publish`。npm registry 不支持两个包的跨包
+原子事务：若第一个 publish 成功后第二个
 失败，相同 workflow 重跑只有在 registry `dist.integrity` 与最终 tgz 的 SHA-512
 完全一致时才跳过已存在版本并继续发布缺失包；同版本不同字节会停止。已公开的 GitHub Release
 禁止 `--clobber` 重跑，也不会因重跑失败被改回 draft；需要修复时发布新版本。
@@ -130,7 +141,7 @@ signed。
 
 ## npm Trusted Publishing
 
-发布 job 使用 GitHub OIDC，不把长期 `NPM_TOKEN` 存入仓库。首次发布前需要一次外部
+`finalize` job 使用 GitHub OIDC，不把长期 `NPM_TOKEN` 存入仓库。首次发布前需要一次外部
 配置：
 
 1. npm 账号拥有 `@agentbell` scope 和两个包名；
@@ -142,8 +153,8 @@ signed。
 `v0.2.0-rc.3` 等预发布版本发布到 npm `next` dist-tag；正式版本使用 `latest`。相同版本
 已存在时 workflow 会跳过 npm publish；只允许仍为 draft 的 GitHub Release 重跑和替换
 资产，公开 Release 必须保持不可变。
-完成上述配置后，把仓库变量 `NPM_PUBLISH_ENABLED` 设为 `true`。变量未开启时，Release
-仍会发布已验证的 Core 和两个 npm tgz，但不会向 npm registry 发起未经授权的 publish。
+完成上述配置后，把仓库变量 `NPM_PUBLISH_ENABLED` 设为 `true`。变量未开启时，`stage`
+仍会生成并验证 Draft，但 `finalize` 会在 npm 或 GitHub 公开发布前失败，Draft 保持不变。
 
 ## 创建 RC
 
@@ -158,8 +169,18 @@ git push origin main
 git push origin v0.3.0-rc.1
 ```
 
-发布失败时保留 draft Release 供诊断，不对外显示为完整发布。npm 版本不可覆盖；修复后
-发布新的 prerelease 或 patch 版本，不强制改写 Git tag。
-所有下载复验和安装 smoke 都在 Release 仍为 draft 时完成；仅这个 workflow 创建或接管
-的 draft 会在失败补偿中保持 draft。已公开 Release 不再允许覆盖资产，也不会被重跑改回
-draft。
+Tag push 只完成 `stage`，成功后 Draft 仍不会公开。检查 stage run 与 Draft 资产后，
+从该 Tag 手动执行：
+
+```bash
+gh workflow run release.yml \
+  --ref v0.3.0-rc.1 \
+  -f tag=v0.3.0-rc.1 \
+  -f action=finalize
+```
+
+也可在 GitHub Actions 的 Release workflow 中选择同一个 Tag、`action=finalize`。
+`finalize` 失败时 Draft 保持不变；npm 版本不可覆盖，首包已经发布时只允许相同 tgz
+补齐第二个包。修复代码后发布新的 prerelease 或 patch 版本，不强制改写 Git tag。
+所有下载复验和安装 smoke 都在 Release 仍为 Draft 时完成。已公开 Release 不允许覆盖
+资产，也不会被失败重跑改回 Draft。

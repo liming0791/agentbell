@@ -40,7 +40,7 @@ test("release workflow keylessly signs and verifies final plugin bundles", async
   );
 });
 
-test("release smoke gates irreversible publication", async () => {
+test("release staging leaves a verified draft before manual finalization", async () => {
   const workflow = await readFile(
     path.join(root, ".github", "workflows", "release.yml"),
     "utf8"
@@ -55,6 +55,16 @@ test("release smoke gates irreversible publication", async () => {
   );
   const smoke = workflow.indexOf(
     "name: Smoke-test the staged GitHub release"
+  );
+  const leaveDraft = workflow.indexOf(
+    "name: Leave the verified release as a draft"
+  );
+  const requireDraft = workflow.indexOf(
+    "name: Require an existing draft release"
+  );
+  const finalizeJob = workflow.indexOf("finalize-release:");
+  const reverify = workflow.indexOf(
+    "name: Re-verify the draft GitHub release"
   );
   const publishNpm = workflow.indexOf("name: Publish npm packages");
   const publishRelease = workflow.indexOf(
@@ -75,14 +85,44 @@ test("release smoke gates irreversible publication", async () => {
   );
   assert.ok(smoke > staged, "staged artifacts must be smoke-tested");
   assert.ok(
-    publishNpm > smoke,
-    "npm publication must happen only after the staged Release smoke"
+    leaveDraft > smoke && leaveDraft < finalizeJob,
+    "the stage action must end with an unpublished verified draft"
+  );
+  assert.ok(
+    finalizeJob > leaveDraft &&
+      requireDraft > finalizeJob &&
+      reverify > requireDraft,
+    "manual finalization must require and re-verify the existing draft"
+  );
+  const stageJob = workflow.slice(
+    workflow.indexOf("stage-draft:"),
+    finalizeJob
+  );
+  assert.ok(
+    !stageJob.includes("npm publish") &&
+      !stageJob.includes("--draft=false") &&
+      !stageJob.includes("environment: npm-publish"),
+    "tag staging must not publish npm or the GitHub Release"
+  );
+  assert.ok(
+    publishNpm > reverify,
+    "npm publication must happen only after final draft re-verification"
   );
   assert.ok(
     publishRelease > publishNpm,
     "the GitHub Release must remain draft until npm publication succeeds"
   );
   for (const required of [
+    "type: choice",
+    "- stage",
+    "- finalize",
+    "if: github.event_name == 'push' || inputs.action == 'stage'",
+    "if: github.event_name == 'workflow_dispatch' && inputs.action == 'finalize'",
+    "environment: npm-publish",
+    "NPM_PUBLISH_ENABLED must be true before finalizing a Release.",
+    "name: Verify draft metadata against the selected tag",
+    ".commit == $commit",
+    "sha256sum --check checksums.txt",
     "name: agentbell-npm",
     "gh release download \"$RELEASE_TAG\"",
     "--pattern 'agentbell-*.tgz'",
@@ -96,7 +136,7 @@ test("release smoke gates irreversible publication", async () => {
   }
 });
 
-test("release reruns cannot mutate or re-draft a public release", async () => {
+test("release reruns cannot mutate a public release or finalize without a draft", async () => {
   const workflow = await readFile(
     path.join(root, ".github", "workflows", "release.yml"),
     "utf8"
@@ -104,12 +144,16 @@ test("release reruns cannot mutate or re-draft a public release", async () => {
   for (const required of [
     "existing_is_draft=\"$(gh release view \"$RELEASE_TAG\" --json isDraft --jq .isDraft)\"",
     "Refusing to replace assets on an already published Release.",
-    "AGENTBELL_RELEASE_MUTABLE=true",
-    "failure() && !cancelled() && env.AGENTBELL_RELEASE_MUTABLE == 'true'"
+    "Finalize requires an existing draft Release.",
+    "gh release edit \"$RELEASE_TAG\" --draft=false"
   ]) {
     assert.ok(
       workflow.includes(required),
       `missing published Release rerun guard: ${required}`
     );
   }
+  assert.ok(
+    !workflow.includes("--draft=true"),
+    "a failed rerun must never re-draft an already published Release"
+  );
 });
