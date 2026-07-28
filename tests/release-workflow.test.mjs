@@ -186,7 +186,9 @@ test("draft lifecycle CI uses two real Release boundaries without publishing", a
   assert.ok(
     !lifecycleJob.includes("npm publish") &&
       !lifecycleJob.includes("--draft=false") &&
-      !lifecycleJob.includes("contents: write"),
+      !lifecycleJob.includes("gh release create") &&
+      !lifecycleJob.includes("gh release upload") &&
+      !lifecycleJob.includes("gh release edit"),
     "the lifecycle proof must not publish or mutate either Release"
   );
 });
