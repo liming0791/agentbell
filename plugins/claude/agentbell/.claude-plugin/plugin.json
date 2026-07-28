@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "agentbell",
   "displayName": "AgentBell",
-  "version": "0.3.0-rc.1",
+  "version": "0.3.0-rc.2",
   "description": "Send Claude Code lifecycle notifications to Feishu through AgentBell and lark-cli.",
   "author": {
     "name": "AgentBell contributors"

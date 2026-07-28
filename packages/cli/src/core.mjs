@@ -18,6 +18,7 @@ import {
   activeStatePath,
   stableBridgePath
 } from "./upgrade.mjs";
+import { fetchGitHubReleaseMetadata } from "./github-release.mjs";
 
 const defaultReleaseBase =
   "https://github.com/liming0791/agentbell/releases";
@@ -89,14 +90,12 @@ async function resolveReleaseAssets({
     };
   }
 
-  const metadataURL = `${repositoryAPI}/releases/tags/v${version}`;
-  const metadataResponse = await fetchRequired(
+  const metadata = await fetchGitHubReleaseMetadata({
     fetchImpl,
-    metadataURL,
+    repositoryAPI,
+    tagName: `v${version}`,
     token,
-    "application/vnd.github+json"
-  );
-  const metadata = await metadataResponse.json();
+  });
   if (!Array.isArray(metadata.assets)) {
     throw new Error(`GitHub release v${version} returned no asset list.`);
   }

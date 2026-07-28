@@ -27,6 +27,8 @@ import {
   stableBridgePath
 } from "../packages/cli/src/upgrade.mjs";
 
+const WebResponse = globalThis.Response;
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -254,6 +256,69 @@ test("uses an explicit token only as an Authorization header", async () => {
     );
     assert.equal(metadata.signatureStatus, "technical-preview");
     assert.equal(metadata.checksum, expected);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("authenticated installs can resolve a draft release by tag", async () => {
+  const binary = Buffer.from("draft-release-binary");
+  const expected = sha256(binary);
+  const checksumsAssetURL =
+    "https://api.github.com/repos/liming0791/agentbell/releases/assets/11";
+  const binaryAssetURL =
+    "https://api.github.com/repos/liming0791/agentbell/releases/assets/12";
+  const requests = [];
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "agentbell-bootstrap-test-")
+  );
+  try {
+    const result = await installCore({
+      version: "0.3.0-rc.2",
+      dataRoot: temporaryRoot,
+      token: "draft-token",
+      fetchImpl: async (url, options) => {
+        requests.push({ url, options });
+        if (url.endsWith("/releases/tags/v0.3.0-rc.2")) {
+          return new WebResponse("missing", { status: 404 });
+        }
+        if (url.endsWith("/releases?per_page=100")) {
+          return WebResponse.json([
+            {
+              tag_name: "v0.3.0-rc.2",
+              draft: true,
+              assets: [
+                { name: "checksums.txt", url: checksumsAssetURL },
+                {
+                  name: "agentbell-linux-amd64",
+                  url: binaryAssetURL
+                }
+              ]
+            }
+          ]);
+        }
+        if (url === checksumsAssetURL) {
+          return new WebResponse(
+            `${expected}  agentbell-linux-amd64\n`
+          );
+        }
+        if (url === binaryAssetURL) {
+          return new WebResponse(binary);
+        }
+        return new WebResponse("unexpected", { status: 500 });
+      },
+      platform: "linux",
+      architecture: "x64"
+    });
+
+    assert.equal(result.reused, false);
+    assert.equal(requests.length, 4);
+    assert.match(requests[0].url, /releases\/tags\/v0\.3\.0-rc\.2$/);
+    assert.match(requests[1].url, /releases\?per_page=100$/);
+    assert.ok(requests.every(
+      ({ options }) =>
+        options.headers.authorization === "Bearer draft-token"
+    ));
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

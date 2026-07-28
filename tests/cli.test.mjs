@@ -92,6 +92,7 @@ test("removes the managed Core only after successful product uninstall", async (
   const forwarded = [];
   const removed = [];
   const dependencies = {
+    resolveActiveCore: async () => null,
     runCore: async (_executable, args) => {
       forwarded.push(args);
       return 0;
@@ -142,7 +143,10 @@ test("uninstall after rollback uses the newer bootstrap Core but removes the act
   });
 
   assert.equal(executions.length, 1);
-  assert.match(executions[0].executable, /0\.3\.0-rc\.1/);
+  assert.equal(
+    executions[0].executable,
+    `/managed/bin/${version}/agentbell`
+  );
   assert.deepEqual(executions[0].args, ["uninstall", "--json"]);
   assert.deepEqual(removed, ["0.2.0-rc.3"]);
 });

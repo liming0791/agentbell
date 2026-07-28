@@ -16,6 +16,7 @@ import path from "node:path";
 import { URL } from "node:url";
 
 import { resolveDataRoot, resolveTarget } from "./platform.mjs";
+import { fetchGitHubReleaseMetadata } from "./github-release.mjs";
 
 const defaultReleaseBase =
   "https://github.com/liming0791/agentbell/releases";
@@ -790,14 +791,12 @@ async function defaultDownloadBundle({
   let urls;
   const repositoryAPI = token ? githubReleaseAPI(releaseBase) : null;
   if (repositoryAPI) {
-    const metadata = await (
-      await fetchRequired(
-        fetchImpl,
-        `${repositoryAPI}/releases/tags/v${version}`,
-        token,
-        "application/vnd.github+json"
-      )
-    ).json();
+    const metadata = await fetchGitHubReleaseMetadata({
+      fetchImpl,
+      repositoryAPI,
+      tagName: `v${version}`,
+      token
+    });
     if (!Array.isArray(metadata.assets)) {
       throw new Error(`GitHub release v${version} returned no asset list.`);
     }
