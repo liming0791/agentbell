@@ -94,6 +94,36 @@ async function seedPreviousInstall({
   );
 }
 
+async function assertPreviousInstall({
+  dataRoot,
+  previousVersion,
+  previousCore,
+  target
+}) {
+  const directory = path.join(dataRoot, "bin", previousVersion);
+  const corePath = path.join(directory, executableName(target));
+  const installedCore = await readFile(corePath);
+  if (!installedCore.equals(previousCore)) {
+    throw new Error(
+      "Preinstalled previous Core does not match the previous Release asset."
+    );
+  }
+  const metadata = JSON.parse(
+    await readFile(path.join(directory, "install.json"), "utf8")
+  );
+  if (
+    metadata.version !== previousVersion ||
+    metadata.target !== target.id ||
+    metadata.fileName !== target.fileName ||
+    metadata.checksum !== sha256(previousCore) ||
+    metadata.signatureStatus !== "technical-preview"
+  ) {
+    throw new Error(
+      "Preinstalled previous Core metadata does not match the previous Release."
+    );
+  }
+}
+
 async function seedHookFiles(dataRoot, bridgePath) {
   const directory = path.join(dataRoot, "release-smoke-hooks");
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -386,6 +416,7 @@ export async function runReleaseLifecycleSmoke({
   currentVersion,
   previousCore,
   currentBundle,
+  previousInstall = "seed",
   smokeCore = defaultSmokeCore,
   restartService,
   exerciseBridge = defaultExerciseBridge,
@@ -410,12 +441,23 @@ export async function runReleaseLifecycleSmoke({
   const stateSentinel = path.join(stateDir, "release-smoke-preserved.txt");
   await writeFile(configSentinel, "preserve config\n", { mode: 0o600 });
   await writeFile(stateSentinel, "preserve state\n", { mode: 0o600 });
-  await seedPreviousInstall({
-    dataRoot,
-    previousVersion,
-    previousCore,
-    target
-  });
+  if (previousInstall === "seed") {
+    await seedPreviousInstall({
+      dataRoot,
+      previousVersion,
+      previousCore,
+      target
+    });
+  } else if (previousInstall === "verify") {
+    await assertPreviousInstall({
+      dataRoot,
+      previousVersion,
+      previousCore,
+      target
+    });
+  } else {
+    throw new Error(`Unsupported previous install mode: ${previousInstall}`);
+  }
   const bridgePath = stableBridgePath({ dataRoot });
   const hookSnapshots = await seedHookFiles(dataRoot, bridgePath);
   const restartCalls = [];
@@ -527,6 +569,9 @@ async function main() {
   const currentVersion = argument("--version");
   const previousVersion = argument("--previous-version");
   const previousCorePath = path.resolve(argument("--previous-core"));
+  const previousInstall = process.argv.includes("--preinstalled-previous")
+    ? "verify"
+    : "seed";
   const target = resolveTarget();
   const core = await readFile(path.join(directory, target.fileName));
   const bridge = await readFile(path.join(directory, target.bridgeFileName));
@@ -542,6 +587,7 @@ async function main() {
       previousVersion,
       currentVersion,
       previousCore: await readFile(previousCorePath),
+      previousInstall,
       currentBundle: {
         core,
         bridge,

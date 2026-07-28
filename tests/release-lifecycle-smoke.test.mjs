@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -159,5 +165,102 @@ test("release lifecycle smoke rejects a non-migration", async () => {
       currentBundle: {}
     }),
     /must differ/i
+  );
+});
+
+test("release lifecycle smoke verifies a real previous bootstrap install", async (context) => {
+  const dataRoot = await mkdtemp(
+    path.join(os.tmpdir(), "agentbell-release-preinstalled-test-")
+  );
+  context.after(() => rm(dataRoot, { recursive: true, force: true }));
+  const target = resolveTarget();
+  const previousVersion = "0.2.0-rc.3";
+  const currentVersion = "0.3.0-rc.2";
+  const previousCore = Buffer.from("previous-release-core");
+  const currentCore = Buffer.from("current-draft-core");
+  const currentBridge = Buffer.from("current-draft-bridge");
+  const previousDirectory = path.join(dataRoot, "bin", previousVersion);
+  const previousPath = path.join(
+    previousDirectory,
+    process.platform === "win32" ? "agentbell.exe" : "agentbell"
+  );
+  await mkdir(previousDirectory, { recursive: true });
+  await writeFile(previousPath, previousCore);
+  await writeFile(
+    path.join(previousDirectory, "install.json"),
+    `${JSON.stringify({
+      version: previousVersion,
+      target: target.id,
+      fileName: target.fileName,
+      checksum: sha256(previousCore),
+      installedAt: new Date(0).toISOString(),
+      signatureStatus: "technical-preview"
+    })}\n`
+  );
+
+  await runReleaseLifecycleSmoke({
+    dataRoot,
+    previousVersion,
+    currentVersion,
+    previousCore,
+    previousInstall: "verify",
+    currentBundle: {
+      core: currentCore,
+      bridge: currentBridge,
+      coreChecksum: sha256(currentCore),
+      bridgeChecksum: sha256(currentBridge),
+      signatureStatus: "technical-preview",
+      manifest: {
+        schemaVersion: 1,
+        version: currentVersion,
+        signatureStatus: "technical-preview"
+      }
+    },
+    smokeCore: async () => {},
+    restartService: async () => {},
+    exerciseBridge: async () => {},
+    inspectBridge: async () => {},
+    uninstallProduct: async () => ({ actual: true })
+  });
+});
+
+test("release lifecycle smoke rejects a mismatched previous Release install", async (context) => {
+  const dataRoot = await mkdtemp(
+    path.join(os.tmpdir(), "agentbell-release-mismatch-test-")
+  );
+  context.after(() => rm(dataRoot, { recursive: true, force: true }));
+  const target = resolveTarget();
+  const previousVersion = "0.2.0-rc.3";
+  const previousDirectory = path.join(dataRoot, "bin", previousVersion);
+  await mkdir(previousDirectory, { recursive: true });
+  await writeFile(
+    path.join(
+      previousDirectory,
+      process.platform === "win32" ? "agentbell.exe" : "agentbell"
+    ),
+    "not-the-release-core"
+  );
+  await writeFile(
+    path.join(previousDirectory, "install.json"),
+    `${JSON.stringify({
+      version: previousVersion,
+      target: target.id,
+      fileName: target.fileName,
+      checksum: sha256(Buffer.from("not-the-release-core")),
+      installedAt: new Date(0).toISOString(),
+      signatureStatus: "technical-preview"
+    })}\n`
+  );
+
+  await assert.rejects(
+    runReleaseLifecycleSmoke({
+      dataRoot,
+      previousVersion,
+      currentVersion: "0.3.0-rc.2",
+      previousCore: Buffer.from("real-previous-release-core"),
+      previousInstall: "verify",
+      currentBundle: {}
+    }),
+    /does not match the previous Release asset/
   );
 });

@@ -157,3 +157,31 @@ test("release reruns cannot mutate a public release or finalize without a draft"
     "a failed rerun must never re-draft an already published Release"
   );
 });
+
+test("draft lifecycle CI uses two real Release boundaries without publishing", async () => {
+  const workflow = await readFile(
+    path.join(root, ".github", "workflows", "draft-release-lifecycle.yml"),
+    "utf8"
+  );
+  for (const required of [
+    "name: Draft Release Lifecycle",
+    "workflow_dispatch:",
+    "gh release view \"$PREVIOUS_TAG\"",
+    "gh release download \"$PREVIOUS_TAG\"",
+    "gh release download \"$CURRENT_TAG\"",
+    "Install the real previous Release through its npm bootstrap",
+    "install-core --version \"$previous_version\"",
+    "--preinstalled-previous",
+    "Upgrade, preserve Hook bytes, send fixture, rollback and uninstall",
+    "Prove the target is still Draft and npm is still unpublished",
+    "draft-release-lifecycle-evidence.json"
+  ]) {
+    assert.ok(workflow.includes(required), `missing lifecycle proof: ${required}`);
+  }
+  assert.ok(
+    !workflow.includes("npm publish") &&
+      !workflow.includes("--draft=false") &&
+      !workflow.includes("contents: write"),
+    "the lifecycle proof must not publish or mutate either Release"
+  );
+});

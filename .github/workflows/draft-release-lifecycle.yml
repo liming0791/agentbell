@@ -1,0 +1,218 @@
+name: Draft Release Lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      previous_tag:
+        description: Published Release used as the installation and rollback source
+        required: true
+        default: v0.2.0-rc.3
+        type: string
+      current_tag:
+        description: Existing Draft Release used as the upgrade target
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    name: Previous Release to final Draft lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREVIOUS_TAG: ${{ inputs.previous_tag }}
+      CURRENT_TAG: ${{ inputs.current_tag }}
+
+    steps:
+      - name: Check out the lifecycle harness
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Require a published previous Release and an unpublished final Draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_is_draft="$(
+            gh release view "$PREVIOUS_TAG" --json isDraft --jq .isDraft
+          )"
+          previous_is_prerelease="$(
+            gh release view "$PREVIOUS_TAG" --json isPrerelease --jq .isPrerelease
+          )"
+          if [ "$previous_is_draft" != "false" ]; then
+            echo "The previous lifecycle source must be a published Release."
+            exit 1
+          fi
+
+          current_release="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate |
+              jq -s --arg tag "$CURRENT_TAG" \
+                '[.[][] | select(.tag_name == $tag)] |
+                 if length == 1 then .[0] else error("Draft tag was not unique") end'
+          )"
+          current_is_draft="$(jq -r .draft <<<"$current_release")"
+          current_is_prerelease="$(jq -r .prerelease <<<"$current_release")"
+          current_url="$(jq -r .html_url <<<"$current_release")"
+          if [ "$current_is_draft" != "true" ]; then
+            echo "The lifecycle target must remain a Draft Release."
+            exit 1
+          fi
+
+          {
+            echo "PREVIOUS_IS_PRERELEASE=$previous_is_prerelease"
+            echo "CURRENT_IS_PRERELEASE=$current_is_prerelease"
+            echo "CURRENT_RELEASE_URL=$current_url"
+          } >> "$GITHUB_ENV"
+
+      - name: Download both real Release boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/previous artifacts/current
+          gh release download "$PREVIOUS_TAG" \
+            --pattern 'agentbell-cli-*.tgz' \
+            --pattern 'agentbell-linux-amd64' \
+            --dir artifacts/previous
+          gh release download "$CURRENT_TAG" --dir artifacts/current
+
+      - name: Verify the final Draft bytes and selected tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${CURRENT_TAG#v}"
+          commit="$(git rev-parse "${CURRENT_TAG}^{commit}")"
+          jq -e \
+            --arg version "$version" \
+            --arg commit "$commit" \
+            '.schemaVersion == 1 and
+             .version == $version and
+             .commit == $commit and
+             .signatureStatus == "technical-preview"' \
+            artifacts/current/release-manifest.json >/dev/null
+          (
+            cd artifacts/current
+            sha256sum --check checksums.txt
+          )
+
+      - name: Install the real previous Release through its npm bootstrap
+        shell: bash
+        env:
+          AGENTBELL_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          previous_version="${PREVIOUS_TAG#v}"
+          data_root="${RUNNER_TEMP}/agentbell-draft-lifecycle-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$data_root" in
+            "${RUNNER_TEMP}/agentbell-draft-lifecycle-"*) ;;
+            *) echo "Unsafe lifecycle root: $data_root"; exit 1 ;;
+          esac
+          rm -rf -- "$data_root"
+          mkdir -p "$data_root" "$data_root/previous-cli"
+          echo "AGENTBELL_DATA_DIR=$data_root" >> "$GITHUB_ENV"
+          echo "HOME=$data_root/home" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$data_root/home/.config" >> "$GITHUB_ENV"
+          echo "AGENTBELL_GITHUB_TOKEN=$AGENTBELL_GITHUB_TOKEN" >> "$GITHUB_ENV"
+
+          previous_cli=(artifacts/previous/agentbell-cli-*.tgz)
+          if [ "${#previous_cli[@]}" -ne 1 ]; then
+            echo "Expected exactly one previous Release CLI archive."
+            exit 1
+          fi
+          tar -xzf "${previous_cli[0]}" -C "$data_root/previous-cli"
+          mkdir -p "$data_root/home"
+          AGENTBELL_DATA_DIR="$data_root" \
+          HOME="$data_root/home" \
+          XDG_CONFIG_HOME="$data_root/home/.config" \
+          node "$data_root/previous-cli/package/bin/agentbell.mjs" \
+            install-core --version "$previous_version"
+
+      - name: Upgrade, preserve Hook bytes, send fixture, rollback and uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_version="${CURRENT_TAG#v}"
+          previous_version="${PREVIOUS_TAG#v}"
+          node scripts/release-lifecycle-smoke.mjs \
+            --directory artifacts/current \
+            --version "$current_version" \
+            --previous-core artifacts/previous/agentbell-linux-amd64 \
+            --previous-version "$previous_version" \
+            --preinstalled-previous |
+            tee "$RUNNER_TEMP/draft-release-lifecycle-report.json"
+
+      - name: Prove the target is still Draft and npm is still unpublished
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_release="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate |
+              jq -s --arg tag "$CURRENT_TAG" \
+                '[.[][] | select(.tag_name == $tag)] |
+                 if length == 1 then .[0] else error("Draft tag was not unique") end'
+          )"
+          if [ "$(jq -r .draft <<<"$current_release")" != "true" ]; then
+            echo "The verified target is no longer a Draft Release."
+            exit 1
+          fi
+          version="${CURRENT_TAG#v}"
+          for package_name in @agentbell/cli @agentbell/hook-runtime; do
+            npm_error="$RUNNER_TEMP/npm-view-error.txt"
+            if npm view "$package_name@$version" version --silent \
+              >"$RUNNER_TEMP/npm-view-output.txt" 2>"$npm_error"; then
+              echo "$package_name@$version was unexpectedly published."
+              exit 1
+            fi
+            if ! grep -q "E404" "$npm_error"; then
+              echo "npm registry lookup failed without proving E404."
+              sed -n '1,20p' "$npm_error"
+              exit 1
+            fi
+          done
+
+      - name: Save the lifecycle evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_url="$(
+            gh release view "$PREVIOUS_TAG" --json url --jq .url
+          )"
+          jq -n \
+            --arg previousTag "$PREVIOUS_TAG" \
+            --arg previousReleaseUrl "$previous_url" \
+            --arg currentTag "$CURRENT_TAG" \
+            --arg currentReleaseUrl "$CURRENT_RELEASE_URL" \
+            --arg ciUrl "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg commit "$GITHUB_SHA" \
+            --slurpfile lifecycle "$RUNNER_TEMP/draft-release-lifecycle-report.json" \
+            '{
+              schemaVersion: 1,
+              previousTag: $previousTag,
+              previousReleaseUrl: $previousReleaseUrl,
+              currentTag: $currentTag,
+              currentReleaseUrl: $currentReleaseUrl,
+              ciUrl: $ciUrl,
+              harnessCommit: $commit,
+              targetRemainedDraft: true,
+              npmRemainedUnpublished: true,
+              lifecycle: $lifecycle[0]
+            }' > draft-release-lifecycle-evidence.json
+          jq . draft-release-lifecycle-evidence.json
+
+      - name: Upload the lifecycle evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: draft-release-lifecycle-evidence
+          path: draft-release-lifecycle-evidence.json
+          if-no-files-found: error
