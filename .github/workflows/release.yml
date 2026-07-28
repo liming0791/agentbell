@@ -532,6 +532,7 @@ jobs:
             --version "$current_version" \
             --previous-core artifacts/previous/agentbell-linux-amd64 \
             --previous-version "$previous_version" \
+            --data-root "$AGENTBELL_DATA_DIR" \
             --preinstalled-previous |
             tee "$RUNNER_TEMP/draft-release-lifecycle-report.json"
 

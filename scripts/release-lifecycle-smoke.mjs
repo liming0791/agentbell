@@ -572,15 +572,21 @@ async function main() {
   const previousInstall = process.argv.includes("--preinstalled-previous")
     ? "verify"
     : "seed";
+  const requestedDataRoot = argument("--data-root");
+  if (previousInstall === "verify" && !requestedDataRoot) {
+    throw new Error(
+      "--preinstalled-previous requires the explicit previous install --data-root."
+    );
+  }
   const target = resolveTarget();
   const core = await readFile(path.join(directory, target.fileName));
   const bridge = await readFile(path.join(directory, target.bridgeFileName));
   const manifest = JSON.parse(
     await readFile(path.join(directory, "release-manifest.json"), "utf8")
   );
-  const dataRoot = await mkdtemp(
-    path.join(os.tmpdir(), "agentbell-m2-release-smoke-")
-  );
+  const dataRoot = requestedDataRoot
+    ? assertSafeRoot(requestedDataRoot)
+    : await mkdtemp(path.join(os.tmpdir(), "agentbell-m2-release-smoke-"));
   try {
     const report = await runReleaseLifecycleSmoke({
       dataRoot,
@@ -599,7 +605,9 @@ async function main() {
     });
     process.stdout.write(`${JSON.stringify(report)}\n`);
   } finally {
-    await rm(dataRoot, { recursive: true, force: true });
+    if (!requestedDataRoot) {
+      await rm(dataRoot, { recursive: true, force: true });
+    }
   }
 }
 

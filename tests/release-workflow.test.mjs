@@ -172,6 +172,7 @@ test("draft lifecycle CI uses two real Release boundaries without publishing", a
     "gh release download \"$CURRENT_TAG\"",
     "Install the real previous Release through its npm bootstrap",
     "install-core --version \"$previous_version\"",
+    "--data-root \"$AGENTBELL_DATA_DIR\"",
     "--preinstalled-previous",
     "Upgrade, preserve Hook bytes, send fixture, rollback and uninstall",
     "Prove the target is still Draft and npm is still unpublished",
