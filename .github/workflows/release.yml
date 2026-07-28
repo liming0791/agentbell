@@ -553,7 +553,7 @@ jobs:
           version="${CURRENT_TAG#v}"
           for package_name in @agentbell/cli @agentbell/hook-runtime; do
             npm_error="$RUNNER_TEMP/npm-view-error.txt"
-            if npm view "$package_name@$version" version --silent \
+            if npm view "$package_name@$version" version \
               >"$RUNNER_TEMP/npm-view-output.txt" 2>"$npm_error"; then
               echo "$package_name@$version was unexpectedly published."
               exit 1
