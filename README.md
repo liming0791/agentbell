@@ -11,11 +11,11 @@ AgentBell 是一个面向 Coding Agent CLI、IDE 和 Desktop Agent 的跨平台�
 审批提醒；完成通知继续使用 `Stop`。
 
 最新已发布版本为 `v0.2.0-rc.3` Technical Preview；当前源码候选版本为
-`v0.3.0-rc.4`。工作树已实现 Go 单文件 Core、持久队列、七个 Adapter、
+`v0.3.0-rc.5`。工作树已实现 Go 单文件 Core、持久队列、七个 Adapter、
 `agentbell setup`、`agentbell test`、三平台用户服务及 M2 本地能力
 （见 [M1 验收记录](./docs/m1-setup-validation.md) 和
-[M2 验收台账](./docs/m2-validation.md)）。`v0.3.0-rc.4` 仅为未公开 Draft，
-GitHub Release 和 npm 均未发布；
+[M2 验收台账](./docs/m2-validation.md)）。RC4 因原 npm scope 与既有第三方组织冲突
+而保持未公开 Draft；RC5 改用当前账号所有的 `@liming0791` scope；
 Node.js Hook runtime 仅保留为 M0 迁移期原型，不是正式 Hook 数据面。
 
 ## 首期范围
@@ -112,7 +112,7 @@ macOS 真实 M1 形态的 LaunchAgent 也已备份后迁移到 stable bridge，�
 ## 目标体验
 
 ```bash
-npx @agentbell/cli@latest setup
+npx @liming0791/agentbell-cli@latest setup
 ```
 
 这条命令（M1 切片 1 起由 Core 实现，macOS 已实机验收）负责：

@@ -161,8 +161,8 @@ jobs:
       - name: Build final npm package archives
         run: |
           mkdir -p artifacts/npm
-          npm pack --workspace @agentbell/hook-runtime --pack-destination artifacts/npm
-          npm pack --workspace @agentbell/cli --pack-destination artifacts/npm
+          npm pack --workspace @liming0791/agentbell-hook-runtime --pack-destination artifacts/npm
+          npm pack --workspace @liming0791/agentbell-cli --pack-destination artifacts/npm
 
       - name: Create platform archives
         working-directory: artifacts/core
@@ -379,13 +379,13 @@ jobs:
 
           mkdir -p "$data_root/npm-downloads"
           gh release download "$RELEASE_TAG" \
-            --pattern 'agentbell-*.tgz' \
+            --pattern 'liming0791-agentbell-*.tgz' \
             --pattern 'checksums.txt' \
             --pattern 'release-manifest.json' \
             --dir "$data_root/npm-downloads"
           node scripts/smoke-npm-packages.mjs \
-            --cli "$data_root/npm-downloads/agentbell-cli-$version.tgz" \
-            --hook-runtime "$data_root/npm-downloads/agentbell-hook-runtime-$version.tgz" \
+            --cli "$data_root/npm-downloads/liming0791-agentbell-cli-$version.tgz" \
+            --hook-runtime "$data_root/npm-downloads/liming0791-agentbell-hook-runtime-$version.tgz" \
             --checksums "$data_root/npm-downloads/checksums.txt" \
             --manifest "$data_root/npm-downloads/release-manifest.json" \
             --version "$version"
@@ -551,7 +551,10 @@ jobs:
             exit 1
           fi
           version="${CURRENT_TAG#v}"
-          for package_name in @agentbell/cli @agentbell/hook-runtime; do
+          for package_name in \
+            @liming0791/agentbell-cli \
+            @liming0791/agentbell-hook-runtime
+          do
             npm_error="$RUNNER_TEMP/npm-view-error.txt"
             if npm view "$package_name@$version" version \
               >"$RUNNER_TEMP/npm-view-output.txt" 2>"$npm_error"; then
@@ -729,8 +732,8 @@ jobs:
           done
 
           node scripts/smoke-npm-packages.mjs \
-            --cli "artifacts/release/agentbell-cli-$version.tgz" \
-            --hook-runtime "artifacts/release/agentbell-hook-runtime-$version.tgz" \
+            --cli "artifacts/release/liming0791-agentbell-cli-$version.tgz" \
+            --hook-runtime "artifacts/release/liming0791-agentbell-hook-runtime-$version.tgz" \
             --checksums "artifacts/release/checksums.txt" \
             --manifest "artifacts/release/release-manifest.json" \
             --version "$version"
@@ -746,8 +749,8 @@ jobs:
           fi
 
           shopt -s nullglob
-          hook_archives=(artifacts/release/agentbell-hook-runtime-*.tgz)
-          cli_archives=(artifacts/release/agentbell-cli-*.tgz)
+          hook_archives=(artifacts/release/liming0791-agentbell-hook-runtime-*.tgz)
+          cli_archives=(artifacts/release/liming0791-agentbell-cli-*.tgz)
           if [ "${#hook_archives[@]}" -ne 1 ] || [ "${#cli_archives[@]}" -ne 1 ]; then
             echo "Expected exactly one final tgz for each npm package."
             exit 1
@@ -775,8 +778,10 @@ jobs:
             echo "$package_name@$version is already published with the exact final archive."
           }
 
-          publish_or_verify "@agentbell/hook-runtime" "${hook_archives[0]}"
-          publish_or_verify "@agentbell/cli" "${cli_archives[0]}"
+          publish_or_verify \
+            "@liming0791/agentbell-hook-runtime" \
+            "${hook_archives[0]}"
+          publish_or_verify "@liming0791/agentbell-cli" "${cli_archives[0]}"
 
       - name: Publish the completed GitHub release
         run: gh release edit "$RELEASE_TAG" --draft=false

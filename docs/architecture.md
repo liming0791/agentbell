@@ -43,7 +43,8 @@ Hook 进程只负责快速入队，目标是在 200ms 内返回。网络发送�
 - GUI 应用启动时常拿不到终端里的 Node.js 和 PATH；绝对路径调用原生二进制更可靠。
 - 可以把 `agentbell`、`agentbell emit`、`agentbell doctor` 和后台服务放在同一个二进制中。
 
-Node.js 保留为 npm 安装入口和开发期脚手架，例如 `npx @agentbell/cli setup` 下载并校验对应平台的正式二进制。
+Node.js 保留为 npm 安装入口和开发期脚手架，例如
+`npx @liming0791/agentbell-cli setup` 下载并校验对应平台的正式二进制。
 
 ### 本地服务与队列
 

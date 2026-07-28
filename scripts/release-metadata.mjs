@@ -15,6 +15,7 @@ const includeDirectories = includeDirectoryValue
 const version = argument("--version", "dev");
 const commit = argument("--commit", "none");
 const signatureStatus = argument("--signature-status", "technical-preview");
+const releaseArtifactPrefixes = ["agentbell-", "liming0791-agentbell-"];
 if (signatureStatus !== "technical-preview") {
   throw new Error(
     `Unsupported signature status ${signatureStatus}; signed release jobs are not implemented.`
@@ -23,7 +24,7 @@ if (signatureStatus !== "technical-preview") {
 const fileLocations = new Map();
 for (const sourceDirectory of [directory, ...includeDirectories]) {
   for (const fileName of await readdir(sourceDirectory)) {
-    if (!fileName.startsWith("agentbell-")) {
+    if (!releaseArtifactPrefixes.some((prefix) => fileName.startsWith(prefix))) {
       continue;
     }
     if (fileLocations.has(fileName)) {

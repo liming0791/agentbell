@@ -33,11 +33,11 @@ test("release metadata covers final npm package archives", async (context) => {
   await mkdir(npm);
   await writeFile(path.join(core, "agentbell-linux-amd64"), "core");
   await writeFile(
-    path.join(npm, "agentbell-cli-0.3.0-rc.1.tgz"),
+    path.join(npm, "liming0791-agentbell-cli-0.3.0-rc.1.tgz"),
     "cli archive"
   );
   await writeFile(
-    path.join(npm, "agentbell-hook-runtime-0.3.0-rc.1.tgz"),
+    path.join(npm, "liming0791-agentbell-hook-runtime-0.3.0-rc.1.tgz"),
     "runtime archive"
   );
 
@@ -56,17 +56,20 @@ test("release metadata covers final npm package archives", async (context) => {
   ]);
 
   const checksums = await readFile(path.join(core, "checksums.txt"), "utf8");
-  assert.match(checksums, /agentbell-cli-0\.3\.0-rc\.1\.tgz/);
-  assert.match(checksums, /agentbell-hook-runtime-0\.3\.0-rc\.1\.tgz/);
+  assert.match(checksums, /liming0791-agentbell-cli-0\.3\.0-rc\.1\.tgz/);
+  assert.match(
+    checksums,
+    /liming0791-agentbell-hook-runtime-0\.3\.0-rc\.1\.tgz/
+  );
   const manifest = JSON.parse(
     await readFile(path.join(core, "release-manifest.json"), "utf8")
   );
   assert.deepEqual(
     manifest.artifacts.map((artifact) => artifact.fileName).sort(),
     [
-      "agentbell-cli-0.3.0-rc.1.tgz",
-      "agentbell-hook-runtime-0.3.0-rc.1.tgz",
-      "agentbell-linux-amd64"
+      "agentbell-linux-amd64",
+      "liming0791-agentbell-cli-0.3.0-rc.1.tgz",
+      "liming0791-agentbell-hook-runtime-0.3.0-rc.1.tgz"
     ]
   );
 });
