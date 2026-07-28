@@ -188,6 +188,36 @@ func TestClaudeAuditHooksExportsValidLegacyReceipt(t *testing.T) {
 	}
 }
 
+func TestClaudeAuditHooksAcceptsVersionCompatibleShellForm(t *testing.T) {
+	adapterValue := newTestClaudeAdapter(t)
+	adapterValue.BridgeExecutable = testBridgePath(t)
+	adapterValue.ActiveGeneration = 9
+	adapterValue.VersionOutput = func(string) (string, error) {
+		return "2.0.19", nil
+	}
+	if _, err := adapterValue.Install(false); err != nil {
+		t.Fatal(err)
+	}
+	report, err := adapterValue.AuditHooks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Summary.CurrentStableBridge != 2 ||
+		report.Summary.MissingStableBridge != 0 ||
+		report.Summary.UnsafeStructure != 0 {
+		t.Fatalf("compatible shell hooks were not current: %#v", report)
+	}
+	for _, finding := range report.Findings {
+		if finding.Event == "StopFailure" ||
+			finding.Event == "PermissionRequest" {
+			t.Fatalf(
+				"Claude 2.0.19 audit managed unsupported event: %#v",
+				finding,
+			)
+		}
+	}
+}
+
 func TestKimiAuditHooksUsesManagedRegionAsOwnershipProof(t *testing.T) {
 	adapterValue := newTestKimiAdapter(t)
 	legacyCommand, err := adapterValue.command()

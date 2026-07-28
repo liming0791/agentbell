@@ -3,6 +3,7 @@ package adapter
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 
 	"github.com/liming0791/agentbell/core/internal/hookaudit"
@@ -83,13 +84,17 @@ func (adapter *CodexAdapter) AuditHooks() (hookaudit.Report, error) {
 }
 
 func (adapter *ClaudeAdapter) AuditHooks() (hookaudit.Report, error) {
-	invocation, err := adapter.hookInvocation()
+	selected, err := adapter.commandDetails()
 	if err != nil {
 		return hookaudit.Report{}, err
 	}
+	form := hookaudit.FormExec
+	if selected.Form == claudeHookFormShell {
+		form = hookaudit.FormShell
+	}
 	desiredInvocation, err := stableAuditInvocation(
-		invocation,
-		hookaudit.FormExec,
+		selected.Invocation,
+		form,
 	)
 	if err != nil {
 		return hookaudit.Report{}, err
@@ -103,7 +108,7 @@ func (adapter *ClaudeAdapter) AuditHooks() (hookaudit.Report, error) {
 		root,
 		claudeAdapterID,
 		source,
-		claudeHookEvents,
+		selected.Events,
 		desiredInvocation,
 		func(handler map[string]any) (hookaudit.Invocation, string) {
 			if handler["type"] != "command" {
@@ -113,12 +118,24 @@ func (adapter *ClaudeAdapter) AuditHooks() (hookaudit.Report, error) {
 			if !ok || command == "" {
 				return hookaudit.Invocation{}, "Claude Hook command must be a string"
 			}
-			rawArgs, ok := handler["args"].([]any)
+			rawArgs, hasArgs := handler["args"]
+			if !hasArgs {
+				if selected.Form == claudeHookFormShell &&
+					command == selected.Command {
+					return desiredInvocation, ""
+				}
+				value, parseErr := parseAuditShellInvocation(command)
+				if parseErr != nil {
+					return hookaudit.Invocation{}, parseErr.Error()
+				}
+				return value, ""
+			}
+			argsArray, ok := rawArgs.([]any)
 			if !ok {
 				return hookaudit.Invocation{}, "Claude Hook args must be an array"
 			}
-			args := make([]string, 0, len(rawArgs))
-			for _, raw := range rawArgs {
+			args := make([]string, 0, len(argsArray))
+			for _, raw := range argsArray {
 				value, ok := raw.(string)
 				if !ok {
 					return hookaudit.Invocation{}, "Claude Hook args must contain only strings"
@@ -136,19 +153,30 @@ func (adapter *ClaudeAdapter) AuditHooks() (hookaudit.Report, error) {
 		return hookaudit.Report{}, err
 	}
 	if receipt, ok := adapter.auditReceipt(); ok {
+		ownedInvocation := hookaudit.Invocation{
+			Form:       hookaudit.FormExec,
+			Executable: receipt.Command,
+			Args:       append([]string(nil), receipt.Args...),
+		}
+		if receipt.HookForm == claudeHookFormShell {
+			ownedInvocation = hookaudit.Invocation{
+				Form:       hookaudit.FormShell,
+				Executable: receipt.InvocationCommand,
+				Args:       append([]string(nil), receipt.InvocationArgs...),
+			}
+		}
 		request.OwnedLegacy = append(request.OwnedLegacy, hookaudit.OwnedHook{
-			Adapter: claudeAdapterID,
-			Event:   "",
-			Invocation: hookaudit.Invocation{
-				Form:       hookaudit.FormExec,
-				Executable: receipt.Command,
-				Args:       append([]string(nil), receipt.Args...),
-			},
-			Proof: hookaudit.ProofManagedReceipt,
+			Adapter:    claudeAdapterID,
+			Event:      "",
+			Invocation: ownedInvocation,
+			Proof:      hookaudit.ProofManagedReceipt,
 		})
 		owned := request.OwnedLegacy[len(request.OwnedLegacy)-1]
 		request.OwnedLegacy = request.OwnedLegacy[:len(request.OwnedLegacy)-1]
-		for _, eventName := range claudeHookEvents {
+		for _, eventName := range receipt.Events {
+			if !slices.Contains(selected.Events, eventName) {
+				continue
+			}
 			owned.Event = eventName
 			request.OwnedLegacy = append(request.OwnedLegacy, owned)
 		}
@@ -309,13 +337,12 @@ func (adapter *ClaudeAdapter) auditReceipt() (claudeReceipt, bool) {
 	if !readAuditReceipt(adapter.receiptPath(), &receipt) ||
 		receipt.Adapter != claudeAdapterID ||
 		receipt.SettingsPath != adapter.settingsPath() ||
-		receipt.Command == "" ||
-		len(receipt.Args) == 0 ||
 		validateReceiptBridge(
 			receipt.Version,
 			receipt.BridgeProtocol,
 			receipt.ActivationGeneration,
-		) != nil {
+		) != nil ||
+		!normalizeClaudeReceipt(&receipt) {
 		return claudeReceipt{}, false
 	}
 	return receipt, true

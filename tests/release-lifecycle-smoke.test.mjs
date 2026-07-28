@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  assertActualUninstallIsolation,
   releaseLifecycleHookArgs,
   runReleaseLifecycleSmoke
 } from "../scripts/release-lifecycle-smoke.mjs";
@@ -31,6 +32,26 @@ test("release lifecycle smoke uses the production hook-v1 argument contract", ()
     "--stdin",
     "--fail-open"
   ]);
+});
+
+test("actual release uninstall requires isolation from user-global services", () => {
+  assert.doesNotThrow(() => assertActualUninstallIsolation({
+    platform: "linux",
+    disposableUser: false
+  }));
+  for (const platform of ["darwin", "win32"]) {
+    assert.throws(
+      () => assertActualUninstallIsolation({
+        platform,
+        disposableUser: false
+      }),
+      /disposable user/i
+    );
+    assert.doesNotThrow(() => assertActualUninstallIsolation({
+      platform,
+      disposableUser: true
+    }));
+  }
 });
 
 test("release lifecycle smoke upgrades, preserves hooks and rolls back", async (context) => {
@@ -76,8 +97,19 @@ test("release lifecycle smoke upgrades, preserves hooks and rolls back", async (
     inspectBridge: async ({ phase }) => {
       doctorPhases.push(phase);
     },
-    uninstallDryRun: async ({ corePath }) => {
+    uninstallProduct: async ({ corePath, activeVersion }) => {
       uninstallCalls.push(corePath);
+      assert.equal(activeVersion, "0.2.0-rc.3");
+      return {
+        actual: true,
+        managedRuntimeRemoved: true,
+        stableBridgeRemoved: true,
+        activeStateRemoved: true,
+        managedHooksRemoved: 5,
+        platformAdaptersSkipped: 2,
+        configPreserved: true,
+        statePreserved: true
+      };
     }
   });
 
@@ -95,7 +127,16 @@ test("release lifecycle smoke upgrades, preserves hooks and rolls back", async (
     bridgeExercises: 2,
     bridgeDoctors: 2,
     serviceRestarts: 2,
-    uninstallDryRun: true
+    uninstall: {
+      actual: true,
+      managedRuntimeRemoved: true,
+      stableBridgeRemoved: true,
+      activeStateRemoved: true,
+      managedHooksRemoved: 5,
+      platformAdaptersSkipped: 2,
+      configPreserved: true,
+      statePreserved: true
+    }
   });
   const active = JSON.parse(
     await readFile(activeStatePath(dataRoot), "utf8")

@@ -143,6 +143,12 @@ jobs:
               gzip -n -9 > "artifacts/plugins/$bundle_name.tar.gz"
           done
 
+      - name: Build final npm package archives
+        run: |
+          mkdir -p artifacts/npm
+          npm pack --workspace @agentbell/hook-runtime --pack-destination artifacts/npm
+          npm pack --workspace @agentbell/cli --pack-destination artifacts/npm
+
       - name: Create platform archives
         working-directory: artifacts/core
         run: |
@@ -167,6 +173,7 @@ jobs:
           version="${RELEASE_TAG#v}"
           node scripts/release-metadata.mjs \
             --directory artifacts/core \
+            --include-directory artifacts/npm \
             --version "$version" \
             --commit "$RELEASE_COMMIT" \
             --signature-status "$SIGNATURE_STATUS"
@@ -221,6 +228,13 @@ jobs:
           path: artifacts/plugins/*.tar.gz
           if-no-files-found: error
 
+      - name: Upload final npm package archives
+        uses: actions/upload-artifact@v7
+        with:
+          name: agentbell-npm
+          path: artifacts/npm/*.tgz
+          if-no-files-found: error
+
   publish:
     name: Publish Core, bridge, npm packages and GitHub release
     needs: build-core
@@ -254,6 +268,12 @@ jobs:
           name: agentbell-plugins
           path: artifacts/plugins
 
+      - name: Download final npm package archives
+        uses: actions/download-artifact@v8
+        with:
+          name: agentbell-npm
+          path: artifacts/npm
+
       - name: Attest Core and bridge artifacts
         if: vars.AGENTBELL_ATTESTATIONS_ENABLED == 'true'
         uses: actions/attest@v4
@@ -272,7 +292,7 @@ jobs:
           echo "GitHub artifact attestations are disabled for this repository."
           echo "The release remains verifiable through checksums.txt, release-manifest.json and the retained Actions artifact."
 
-      - name: Stage Core, bridge and signed plugins in a draft GitHub release
+      - name: Stage Core, bridge, signed plugins and npm archives in a draft GitHub release
         shell: bash
         run: |
           set -euo pipefail
@@ -282,14 +302,22 @@ jobs:
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" artifacts/core/* artifacts/plugins/* --clobber
+            existing_is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+            if [ "$existing_is_draft" != "true" ]; then
+              echo "Refusing to replace assets on an already published Release."
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" \
+              artifacts/core/* artifacts/plugins/* artifacts/npm/* --clobber
           else
-            gh release create "$RELEASE_TAG" artifacts/core/* artifacts/plugins/* \
+            gh release create "$RELEASE_TAG" \
+              artifacts/core/* artifacts/plugins/* artifacts/npm/* \
               --draft \
               --generate-notes \
               --verify-tag \
               "${prerelease_args[@]}"
           fi
+          echo "AGENTBELL_RELEASE_MUTABLE=true" >> "$GITHUB_ENV"
 
       - name: Use Node.js 24 for trusted publishing
         uses: actions/setup-node@v6
@@ -341,11 +369,18 @@ jobs:
             "$installed_core" plugin verify "$plugin_root" --json
           done
 
-      - name: Build npm package archives
-        run: |
-          mkdir -p artifacts/npm
-          npm pack --workspace @agentbell/hook-runtime --pack-destination artifacts/npm
-          npm pack --workspace @agentbell/cli --pack-destination artifacts/npm
+          mkdir -p "$data_root/npm-downloads"
+          gh release download "$RELEASE_TAG" \
+            --pattern 'agentbell-*.tgz' \
+            --pattern 'checksums.txt' \
+            --pattern 'release-manifest.json' \
+            --dir "$data_root/npm-downloads"
+          node scripts/smoke-npm-packages.mjs \
+            --cli "$data_root/npm-downloads/agentbell-cli-$version.tgz" \
+            --hook-runtime "$data_root/npm-downloads/agentbell-hook-runtime-$version.tgz" \
+            --checksums "$data_root/npm-downloads/checksums.txt" \
+            --manifest "$data_root/npm-downloads/release-manifest.json" \
+            --version "$version"
 
       - name: Publish npm packages
         if: vars.NPM_PUBLISH_ENABLED == 'true'
@@ -358,17 +393,38 @@ jobs:
             publish_args+=(--tag next)
           fi
 
-          if npm view "@agentbell/hook-runtime@$version" version --silent >/dev/null 2>&1; then
-            echo "@agentbell/hook-runtime@$version is already published."
-          else
-            npm publish artifacts/npm/agentbell-hook-runtime-*.tgz "${publish_args[@]}"
+          shopt -s nullglob
+          hook_archives=(artifacts/npm/agentbell-hook-runtime-*.tgz)
+          cli_archives=(artifacts/npm/agentbell-cli-*.tgz)
+          if [ "${#hook_archives[@]}" -ne 1 ] || [ "${#cli_archives[@]}" -ne 1 ]; then
+            echo "Expected exactly one final tgz for each npm package."
+            exit 1
           fi
 
-          if npm view "@agentbell/cli@$version" version --silent >/dev/null 2>&1; then
-            echo "@agentbell/cli@$version is already published."
-          else
-            npm publish artifacts/npm/agentbell-cli-*.tgz "${publish_args[@]}"
-          fi
+          publish_or_verify() {
+            local package_name="$1"
+            local archive="$2"
+            local published_integrity
+            published_integrity="$(
+              npm view "$package_name@$version" dist.integrity --silent 2>/dev/null || true
+            )"
+            if [ -z "$published_integrity" ]; then
+              npm publish "$archive" "${publish_args[@]}"
+              return
+            fi
+            local archive_integrity
+            archive_integrity="$(
+              node -e 'const c=require("node:crypto"),f=require("node:fs");process.stdout.write("sha512-"+c.createHash("sha512").update(f.readFileSync(process.argv[1])).digest("base64"))' "$archive"
+            )"
+            if [ "$published_integrity" != "$archive_integrity" ]; then
+              echo "Published npm archive does not match the final Release tgz."
+              exit 1
+            fi
+            echo "$package_name@$version is already published with the exact final archive."
+          }
+
+          publish_or_verify "@agentbell/hook-runtime" "${hook_archives[0]}"
+          publish_or_verify "@agentbell/cli" "${cli_archives[0]}"
 
       - name: Record disabled npm registry publishing
         if: vars.NPM_PUBLISH_ENABLED != 'true'
@@ -376,14 +432,11 @@ jobs:
           echo "npm registry publishing is disabled until @agentbell ownership and trusted publishing are configured."
           echo "The verified npm tgz archives will still be attached to the GitHub Release."
 
-      - name: Upload npm archives to GitHub release
-        run: gh release upload "$RELEASE_TAG" artifacts/npm/*.tgz --clobber
-
       - name: Publish the completed GitHub release
         run: gh release edit "$RELEASE_TAG" --draft=false
 
       - name: Return an incomplete release to draft
-        if: failure() && !cancelled()
+        if: failure() && !cancelled() && env.AGENTBELL_RELEASE_MUTABLE == 'true'
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" --draft=true

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liming0791/agentbell/core/internal/adapter"
 	"github.com/liming0791/agentbell/core/internal/config"
 	"github.com/liming0791/agentbell/core/internal/service"
 )
@@ -696,6 +697,10 @@ func TestAdapterClaudeCommandsAndUnifiedUninstall(t *testing.T) {
 	if len(results) != len(supportedAdapterIDs) {
 		t.Fatalf("unexpected uninstall results: %#v", results)
 	}
+	if runtime.GOOS == "linux" {
+		assertSkippedUninstallAdapter(t, results, "qoder-work")
+		assertSkippedUninstallAdapter(t, results, "trae")
+	}
 	for _, path := range []string{
 		filepath.Join(root, ".codex", "hooks.json"),
 		filepath.Join(root, ".claude", "settings.json"),
@@ -721,6 +726,105 @@ func TestAdapterClaudeCommandsAndUnifiedUninstall(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, ".config", "opencode", "plugins", "agentbell.js")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unified uninstall left OpenCode plugin: %v", err)
 	}
+}
+
+func TestSupportedAdaptersForLinuxAuditPlatformSkips(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
+	t.Setenv("KIMI_CODE_HOME", filepath.Join(root, ".kimi-code"))
+	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(root, ".config", "opencode"))
+	t.Setenv("QODER_CONFIG_DIR", filepath.Join(root, ".qoder"))
+	t.Setenv("QODERWORK_CONFIG_DIR", filepath.Join(root, ".qoderwork"))
+	t.Setenv("TRAE_CONFIG_DIR", filepath.Join(root, ".trae"))
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := supportedAdaptersWithRuntime(
+		filepath.Join(root, "state"),
+		adapterRuntime{CoreExecutable: executable},
+		"linux",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := uninstallAdapters(selected, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded []map[string]any
+	encoded, err := json.Marshal(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != len(supportedAdapterIDs) {
+		t.Fatalf("unexpected Linux uninstall results: %#v", decoded)
+	}
+	assertSkippedUninstallAdapter(t, decoded, "qoder-work")
+	assertSkippedUninstallAdapter(t, decoded, "trae")
+}
+
+func TestUnifiedUninstallDoesNotSkipApplicableAdapterErrors(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
+	t.Setenv("KIMI_CODE_HOME", filepath.Join(root, ".kimi-code"))
+	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(root, ".config", "opencode"))
+	t.Setenv("QODER_CONFIG_DIR", filepath.Join(root, ".qoder"))
+	t.Setenv("QODERWORK_CONFIG_DIR", filepath.Join(root, ".qoderwork"))
+	t.Setenv("TRAE_CONFIG_DIR", filepath.Join(root, ".trae"))
+	if err := os.MkdirAll(os.Getenv("CODEX_HOME"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(os.Getenv("CODEX_HOME"), "hooks.json"),
+		[]byte("{invalid"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := supportedAdaptersWithRuntime(
+		filepath.Join(root, "state"),
+		adapterRuntime{CoreExecutable: executable},
+		"linux",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uninstallAdapters(selected, true); err == nil ||
+		!strings.Contains(err.Error(), "uninstall codex") {
+		t.Fatalf("applicable adapter error was hidden: %v", err)
+	}
+}
+
+func assertSkippedUninstallAdapter(
+	t *testing.T,
+	results []map[string]any,
+	id string,
+) {
+	t.Helper()
+	for _, result := range results {
+		if result["adapter"] != id {
+			continue
+		}
+		message, _ := result["message"].(string)
+		if !strings.Contains(message, "skipped") ||
+			!strings.Contains(message, "not supported on linux") {
+			t.Fatalf("%s skip is not auditable: %#v", id, result)
+		}
+		return
+	}
+	t.Fatalf("%s is missing from uninstall results: %#v", id, results)
 }
 
 func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
@@ -794,6 +898,10 @@ func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
 		!dryRun.Service.Installed {
 		t.Fatalf("unexpected product uninstall plan: %#v", dryRun)
 	}
+	if runtime.GOOS == "linux" {
+		assertSkippedProductUninstallAdapter(t, dryRun.Adapters, "qoder-work")
+		assertSkippedProductUninstallAdapter(t, dryRun.Adapters, "trae")
+	}
 	if _, err := os.Stat(dryRun.Service.DefinitionPath); err != nil {
 		t.Fatalf("dry-run removed service definition: %v", err)
 	}
@@ -815,6 +923,10 @@ func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
 	if actual.DryRun || len(actual.Adapters) != len(supportedAdapterIDs) ||
 		actual.Service.Installed {
 		t.Fatalf("unexpected product uninstall result: %#v", actual)
+	}
+	if runtime.GOOS == "linux" {
+		assertSkippedProductUninstallAdapter(t, actual.Adapters, "qoder-work")
+		assertSkippedProductUninstallAdapter(t, actual.Adapters, "trae")
 	}
 	if _, err := os.Stat(dryRun.Service.DefinitionPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("product uninstall left service definition: %v", err)
@@ -847,4 +959,24 @@ func TestProductUninstallStopsServiceAndRemovesAllHooks(t *testing.T) {
 	if _, err := os.Stat(os.Getenv("AGENTBELL_CONFIG")); err != nil {
 		t.Fatalf("product uninstall removed preserved config: %v", err)
 	}
+}
+
+func assertSkippedProductUninstallAdapter(
+	t *testing.T,
+	results []adapter.AdapterResult,
+	id string,
+) {
+	t.Helper()
+	for _, result := range results {
+		if result.Adapter != id {
+			continue
+		}
+		if !strings.Contains(result.Message, "skipped") ||
+			!strings.Contains(result.Message, "not supported on linux") ||
+			result.Changed {
+			t.Fatalf("%s product uninstall skip is not auditable: %#v", id, result)
+		}
+		return
+	}
+	t.Fatalf("%s is missing from product uninstall results: %#v", id, results)
 }

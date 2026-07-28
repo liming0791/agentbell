@@ -482,11 +482,30 @@ func supportedAdapters(resolved paths.Paths) ([]cliAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	return supportedAdaptersWithRuntime(
+		resolved.StateDir,
+		selectedRuntime,
+		runtime.GOOS,
+	)
+}
+
+func supportedAdaptersWithRuntime(
+	stateDir string,
+	selectedRuntime adapterRuntime,
+	goos string,
+) ([]cliAdapter, error) {
 	result := make([]cliAdapter, 0, len(supportedAdapterIDs))
 	for _, id := range supportedAdapterIDs {
+		if !adapterSupportedOnPlatform(id, goos) {
+			result = append(result, platformSkippedAdapter{
+				id:       id,
+				platform: goos,
+			})
+			continue
+		}
 		value, err := adapterForIDWithRuntime(
 			id,
-			resolved.StateDir,
+			stateDir,
 			selectedRuntime,
 		)
 		if err != nil {
@@ -495,6 +514,66 @@ func supportedAdapters(resolved paths.Paths) ([]cliAdapter, error) {
 		result = append(result, value)
 	}
 	return result, nil
+}
+
+func adapterSupportedOnPlatform(id, goos string) bool {
+	switch id {
+	case "qoder-work", "trae":
+		return goos == "darwin" || goos == "windows"
+	default:
+		return true
+	}
+}
+
+type platformSkippedAdapter struct {
+	id       string
+	platform string
+}
+
+func (value platformSkippedAdapter) Plan() adapter.AdapterPlan {
+	return adapter.AdapterPlan{
+		Adapter: value.id,
+		Changes: []string{value.message()},
+	}
+}
+
+func (value platformSkippedAdapter) Install(
+	bool,
+) (adapter.AdapterResult, error) {
+	return value.result(), errors.New(value.unsupportedMessage())
+}
+
+func (value platformSkippedAdapter) Verify() (adapter.AdapterResult, error) {
+	return value.result(), errors.New(value.unsupportedMessage())
+}
+
+func (value platformSkippedAdapter) Uninstall(
+	bool,
+) (adapter.AdapterResult, error) {
+	return value.result(), nil
+}
+
+func (value platformSkippedAdapter) Diagnose() adapter.AdapterResult {
+	return value.result()
+}
+
+func (value platformSkippedAdapter) result() adapter.AdapterResult {
+	return adapter.AdapterResult{
+		Adapter: value.id,
+		Message: value.message(),
+	}
+}
+
+func (value platformSkippedAdapter) message() string {
+	return value.unsupportedMessage() + "; skipped"
+}
+
+func (value platformSkippedAdapter) unsupportedMessage() string {
+	return fmt.Sprintf(
+		"%s adapter is not supported on %s",
+		value.id,
+		value.platform,
+	)
 }
 
 func resolveAdapterRuntime(resolved paths.Paths) (adapterRuntime, error) {

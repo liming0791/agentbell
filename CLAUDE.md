@@ -38,7 +38,8 @@ Core 本地构建：`cd core && go build ./cmd/agentbell`。
 - Adapter `verify` 只证明配置结构正确；运行态必须由 `diagnose` 的 runtime proof 确认。
   Codex 只接受 `task.completed` 的事件级 proof；新/变更/重排 Hook 需经 `/hooks` 信任
   并新建任务。Codex `PermissionRequest` 缺少明确 `approvals_reviewer=user` 时必须抑制，
-  不能把 `auto_review` 误报成人工待审批。Kimi Code 需新会话加载。
+  不能把 `auto_review` 误报成人工待审批。Claude Code 必须按检测版本协商 Hook 事件与
+  命令形态，旧版本遇到未知事件可能丢弃整组 Hook；Kimi Code 需新会话加载。
 - 后台服务必须经 `agentbell service install` 注册：macOS 使用 LaunchAgent、Windows
   使用当前用户登录计划任务、Linux 优先 systemd user 并回退 XDG Autostart。发送端使用
   配置中的 `larkCliPath` 绝对路径，不得依赖 GUI/登录服务继承 shell PATH；macOS plist

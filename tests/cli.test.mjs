@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { detectEnvironment } from "../packages/cli/src/detect.mjs";
 import {
   booleanFlagEnabled,
+  compareReleaseVersions,
   run
 } from "../packages/cli/src/index.mjs";
 
@@ -80,6 +81,13 @@ test("parses boolean forwarding flags without unsafe uninstall ambiguity", () =>
   assert.equal(booleanFlagEnabled([], "--dry-run"), false);
 });
 
+test("compares release and prerelease versions for rollback-safe routing", () => {
+  assert.ok(compareReleaseVersions("0.3.0-rc.1", "0.2.0-rc.3") > 0);
+  assert.ok(compareReleaseVersions("0.3.0", "0.3.0-rc.9") > 0);
+  assert.ok(compareReleaseVersions("0.3.0-rc.10", "0.3.0-rc.2") > 0);
+  assert.equal(compareReleaseVersions("0.3.0-rc.1", "0.3.0-rc.1"), 0);
+});
+
 test("removes the managed Core only after successful product uninstall", async () => {
   const forwarded = [];
   const removed = [];
@@ -111,6 +119,32 @@ test("removes the managed Core only after successful product uninstall", async (
     /exited with code 9/
   );
   assert.deepEqual(removed, []);
+});
+
+test("uninstall after rollback uses the newer bootstrap Core but removes the active runtime", async () => {
+  const executions = [];
+  const removed = [];
+  await run(["uninstall", "--json"], {
+    resolveActiveCore: async () => ({
+      path: "/managed/bin/0.2.0-rc.3/agentbell",
+      version: "0.2.0-rc.3"
+    }),
+    coreInstallPath: ({ version: selectedVersion }) =>
+      `/managed/bin/${selectedVersion}/agentbell`,
+    runCore: async (executable, args) => {
+      executions.push({ executable, args });
+      return 0;
+    },
+    uninstallCore: async ({ version: selectedVersion }) => {
+      removed.push(selectedVersion);
+      return { removed: true };
+    }
+  });
+
+  assert.equal(executions.length, 1);
+  assert.match(executions[0].executable, /0\.3\.0-rc\.1/);
+  assert.deepEqual(executions[0].args, ["uninstall", "--json"]);
+  assert.deepEqual(removed, ["0.2.0-rc.3"]);
 });
 
 test("routes native commands to a checksum-installed Core", async (context) => {

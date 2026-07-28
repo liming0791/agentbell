@@ -46,8 +46,10 @@ test("release smoke gates irreversible publication", async () => {
     "utf8"
   );
   const staged = workflow.indexOf(
-    "name: Stage Core, bridge and signed plugins in a draft GitHub release"
+    "name: Stage Core, bridge, signed plugins and npm archives in a draft GitHub release"
   );
+  const packNpm = workflow.indexOf("name: Build final npm package archives");
+  const includeNpm = workflow.indexOf("--include-directory artifacts/npm");
   const httpsSmoke = workflow.indexOf(
     "name: Smoke-test final Linux Core over TLS and HTTPS"
   );
@@ -59,6 +61,14 @@ test("release smoke gates irreversible publication", async () => {
     "name: Publish the completed GitHub release"
   );
   assert.ok(staged >= 0, "release assets must first be staged as a draft");
+  assert.ok(
+    packNpm >= 0 && packNpm < staged,
+    "final npm archives must be built before draft staging"
+  );
+  assert.ok(
+    includeNpm > packNpm && includeNpm < staged,
+    "npm archives must be covered by release metadata before staging"
+  );
   assert.ok(
     httpsSmoke >= 0 && httpsSmoke < staged,
     "final Linux Core TLS smoke must pass before draft staging"
@@ -72,4 +82,34 @@ test("release smoke gates irreversible publication", async () => {
     publishRelease > publishNpm,
     "the GitHub Release must remain draft until npm publication succeeds"
   );
+  for (const required of [
+    "name: agentbell-npm",
+    "gh release download \"$RELEASE_TAG\"",
+    "--pattern 'agentbell-*.tgz'",
+    "node scripts/smoke-npm-packages.mjs",
+    "--checksums",
+    "--manifest",
+    "dist.integrity",
+    "Published npm archive does not match the final Release tgz."
+  ]) {
+    assert.ok(workflow.includes(required), `missing npm release gate: ${required}`);
+  }
+});
+
+test("release reruns cannot mutate or re-draft a public release", async () => {
+  const workflow = await readFile(
+    path.join(root, ".github", "workflows", "release.yml"),
+    "utf8"
+  );
+  for (const required of [
+    "existing_is_draft=\"$(gh release view \"$RELEASE_TAG\" --json isDraft --jq .isDraft)\"",
+    "Refusing to replace assets on an already published Release.",
+    "AGENTBELL_RELEASE_MUTABLE=true",
+    "failure() && !cancelled() && env.AGENTBELL_RELEASE_MUTABLE == 'true'"
+  ]) {
+    assert.ok(
+      workflow.includes(required),
+      `missing published Release rerun guard: ${required}`
+    );
+  }
 });

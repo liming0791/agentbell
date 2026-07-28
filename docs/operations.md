@@ -291,11 +291,21 @@ agentbell adapter verify claude-code --json
 ```
 
 Adapter 结构化合并 `$CLAUDE_CONFIG_DIR/settings.json`（默认
-`~/.claude/settings.json`）的 `Stop`、`StopFailure`、`Notification` 和
-`PermissionRequest`。命令使用官方 exec-form：绝对 Core 路径与独立参数数组，不经过
-shell 拆词；因此同一配置可安全用于 Windows、macOS、Linux。Claude Code CLI 与
-Desktop Code tab 的本地会话共享用户级 settings 和 Hooks；云会话不读取本机 Hook。
-settings 通常会热重载，若 `/hooks` 没有出现新条目再重启会话。
+`~/.claude/settings.json`）。Adapter 会先检测 Claude Code 版本，再选择该版本认识的
+事件和命令形态，避免旧版本因一个未知事件而忽略整个 `hooks` 对象：
+
+| Claude Code 版本 | AgentBell 事件 | 命令形态 |
+| --- | --- | --- |
+| 未知或 `<2.0.45` | `Stop`、`Notification` | 安全转义的兼容 shell command |
+| `2.0.45`～`2.1.77` | 上述事件 + `PermissionRequest` | 兼容 shell command |
+| `2.1.78`～`2.1.138` | 上述事件 + `StopFailure` | 兼容 shell command |
+| `>=2.1.139` | 四个事件 | 官方 exec-form：绝对路径 + 独立 `args` |
+
+receipt 会记录安装时的版本、事件集、命令形态和底层参数；升级或降级 Claude Code 后
+再次执行 `adapter install claude-code`，只迁移 AgentBell 自有条目并保留其他 Hook。
+`verify` 会拒绝与当前检测版本不兼容的旧 receipt。Claude Code CLI 与 Desktop Code
+tab 的本地会话共享用户级 settings 和 Hooks；云会话不读取本机 Hook。settings 通常会
+热重载，若 `/hooks` 没有出现新条目再重启会话。
 
 Codex 与 Claude Code 的共享用户 Hook 输入目前都没有可靠、公开的 CLI/Desktop
 判别字段，因此两种本地执行面都会以兼容值 `surface: cli` 入队；这不影响通知触发，

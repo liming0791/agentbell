@@ -16,9 +16,12 @@ import { fileURLToPath } from "node:url";
 import { resolveTarget } from "../packages/cli/src/platform.mjs";
 import {
   rollback,
+  resolveActiveCore,
   stableBridgePath,
   upgrade
 } from "../packages/cli/src/upgrade.mjs";
+import { uninstallCore } from "../packages/cli/src/core.mjs";
+import { run as runBootstrap } from "../packages/cli/src/index.mjs";
 
 const schemaVersion = 1;
 
@@ -215,23 +218,166 @@ async function defaultInspectBridge({
   }
 }
 
-async function defaultUninstallDryRun({
-  corePath,
+function releaseSmokeEnvironment({
   dataRoot,
   stateDir,
   configDir,
   homeDir
 }) {
-  await runExecutable(corePath, ["uninstall", "--dry-run", "--json"], {
-    env: {
-      ...process.env,
-      HOME: homeDir,
-      AGENTBELL_DATA_DIR: dataRoot,
-      AGENTBELL_CONFIG: path.join(configDir, "config.json"),
-      AGENTBELL_STATE_DIR: stateDir,
-      XDG_CONFIG_HOME: path.join(homeDir, ".config")
+  return {
+    ...process.env,
+    HOME: homeDir,
+    AGENTBELL_DATA_DIR: dataRoot,
+    AGENTBELL_CONFIG: path.join(configDir, "config.json"),
+    AGENTBELL_STATE_DIR: stateDir,
+    XDG_CONFIG_HOME: path.join(homeDir, ".config"),
+    CODEX_HOME: path.join(homeDir, ".codex"),
+    CLAUDE_CONFIG_DIR: path.join(homeDir, ".claude"),
+    KIMI_CODE_HOME: path.join(homeDir, ".kimi-code"),
+    OPENCODE_CONFIG_DIR: path.join(homeDir, ".config", "opencode"),
+    QODER_CONFIG_DIR: path.join(homeDir, ".qoder"),
+    QODERWORK_CONFIG_DIR: path.join(homeDir, ".qoderwork"),
+    TRAE_CONFIG_DIR: path.join(homeDir, ".trae")
+  };
+}
+
+export function assertActualUninstallIsolation({
+  platform = process.platform,
+  disposableUser = process.env.AGENTBELL_RELEASE_SMOKE_DISPOSABLE_USER === "1"
+} = {}) {
+  if (platform !== "linux" && !disposableUser) {
+    throw new Error(
+      "Actual release uninstall on macOS/Windows requires a disposable user " +
+      "and AGENTBELL_RELEASE_SMOKE_DISPOSABLE_USER=1 because service labels " +
+      "are user-global."
+    );
+  }
+}
+
+async function pathMissing(value) {
+  try {
+    await readFile(value);
+    return false;
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return true;
+    }
+    throw error;
+  }
+}
+
+async function defaultUninstallProduct({
+  corePath,
+  dataRoot,
+  stateDir,
+  configDir,
+  homeDir,
+  activeVersion,
+  configSentinel,
+  stateSentinel
+}) {
+  assertActualUninstallIsolation();
+  const environment = releaseSmokeEnvironment({
+    dataRoot,
+    stateDir,
+    configDir,
+    homeDir
+  });
+  const allAdapterIDs = [
+    "codex",
+    "claude-code",
+    "kimi-code",
+    "opencode",
+    "qoder",
+    "qoder-work",
+    "trae"
+  ];
+  const installAdapterIDs = process.platform === "linux"
+    ? allAdapterIDs.filter(
+        (adapterID) => !["qoder-work", "trae"].includes(adapterID)
+      )
+    : allAdapterIDs;
+  const skippedAdapterIDs = allAdapterIDs.filter(
+    (adapterID) => !installAdapterIDs.includes(adapterID)
+  );
+  for (const adapterID of installAdapterIDs) {
+    await runExecutable(
+      corePath,
+      ["adapter", "install", adapterID, "--json"],
+      { env: environment }
+    );
+  }
+  let productReport;
+  let cleanup;
+  await runBootstrap(["uninstall", "--json"], {
+    resolveActiveCore: () => resolveActiveCore({ dataRoot }),
+    coreInstallPath: () => corePath,
+    runCore: async (executable, args) => {
+      if (path.resolve(executable) !== path.resolve(corePath)) {
+        throw new Error(
+          "Release lifecycle bootstrap did not select the current candidate Core after rollback."
+        );
+      }
+      const output = await runExecutable(executable, args, {
+        env: environment
+      });
+      productReport = JSON.parse(output.toString("utf8"));
+      return 0;
+    },
+    uninstallCore: async ({ version }) => {
+      if (version !== activeVersion) {
+        throw new Error(
+          "Release lifecycle bootstrap did not clean the rolled-back active runtime."
+        );
+      }
+      cleanup = await uninstallCore({ version, dataRoot });
+      return cleanup;
     }
   });
+  if (productReport.dryRun !== false) {
+    throw new Error("Release lifecycle product uninstall was not applied.");
+  }
+  const managedHooksRemoved = installAdapterIDs.every((adapterID) =>
+    productReport.adapters?.some(
+      (result) => result?.adapter === adapterID && result.changed === true
+    )
+  );
+  const platformAdaptersSkipped = skippedAdapterIDs.every((adapterID) =>
+    productReport.adapters?.some(
+      (result) =>
+        result?.adapter === adapterID &&
+        result.changed === false &&
+        result.message?.includes("skipped") &&
+        result.message.includes(`not supported on ${process.platform}`)
+    )
+  );
+  if (!cleanup) {
+    throw new Error("Release lifecycle bootstrap did not clean the active Core.");
+  }
+  const activeRemoved = await pathMissing(
+    path.join(dataRoot, "bin", "active.json")
+  );
+  const bridgeRemoved = await pathMissing(stableBridgePath({ dataRoot }));
+  const runtimeRemoved = await pathMissing(cleanup.path);
+  const configPreserved = (await readFile(configSentinel, "utf8")) ===
+    "preserve config\n";
+  const statePreserved = (await readFile(stateSentinel, "utf8")) ===
+    "preserve state\n";
+  if (!cleanup.removed || !runtimeRemoved || !activeRemoved || !bridgeRemoved ||
+      !managedHooksRemoved || !platformAdaptersSkipped ||
+      !configPreserved || !statePreserved) {
+    throw new Error("Release lifecycle uninstall invariants were not satisfied.");
+  }
+  return {
+    actual: true,
+    managedRuntimeRemoved: runtimeRemoved,
+    stableBridgeRemoved: bridgeRemoved,
+    activeStateRemoved: activeRemoved,
+    managedHooksRemoved: installAdapterIDs.length,
+    platformAdaptersSkipped: skippedAdapterIDs.length,
+    configPreserved,
+    statePreserved
+  };
 }
 
 export async function runReleaseLifecycleSmoke({
@@ -244,7 +390,7 @@ export async function runReleaseLifecycleSmoke({
   restartService,
   exerciseBridge = defaultExerciseBridge,
   inspectBridge = defaultInspectBridge,
-  uninstallDryRun = defaultUninstallDryRun
+  uninstallProduct = defaultUninstallProduct
 }) {
   if (previousVersion === currentVersion) {
     throw new Error("Previous and current versions must differ.");
@@ -260,6 +406,10 @@ export async function runReleaseLifecycleSmoke({
   await mkdir(configDir, { recursive: true, mode: 0o700 });
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
   await mkdir(homeDir, { recursive: true, mode: 0o700 });
+  const configSentinel = path.join(configDir, "release-smoke-preserved.txt");
+  const stateSentinel = path.join(stateDir, "release-smoke-preserved.txt");
+  await writeFile(configSentinel, "preserve config\n", { mode: 0o600 });
+  await writeFile(stateSentinel, "preserve state\n", { mode: 0o600 });
   await seedPreviousInstall({
     dataRoot,
     previousVersion,
@@ -343,12 +493,15 @@ export async function runReleaseLifecycleSmoke({
     configDir,
     homeDir
   });
-  await uninstallDryRun({
+  const uninstall = await uninstallProduct({
     corePath: currentCorePath,
     dataRoot,
     stateDir,
     configDir,
-    homeDir
+    homeDir,
+    activeVersion: previousVersion,
+    configSentinel,
+    stateSentinel
   });
   return {
     schemaVersion,
@@ -360,7 +513,7 @@ export async function runReleaseLifecycleSmoke({
     bridgeExercises: 2,
     bridgeDoctors: 2,
     serviceRestarts: restartCalls.length,
-    uninstallDryRun: true
+    uninstall
   };
 }
 

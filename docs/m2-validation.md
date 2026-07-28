@@ -28,14 +28,38 @@
 | M2-604 实机矩阵 | 下表 | 未通过 |
 | M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | workflow 已接线且本地旧 Release asset/TLS smoke 通过；真实新 RC 未运行 |
 
+当前 Release 候选还增加了四个不可逆发布前门禁：上一 Release lifecycle 必须实际执行
+产品卸载与 bootstrap Core 清理并验证默认保留项；两个最终 npm tgz 必须进入
+checksums/release manifest；publish job 必须从 draft Release 下载并安装 smoke 这两个
+tgz；已公开的同 tag Release 不允许 `--clobber` 或在失败补偿中退回 draft。npm registry
+不提供两个包的跨包原子事务，首包成功、次包失败时仍需以同一版本重跑补齐，不能把该
+补偿模型描述成原子发布；重跑只在已发布版本的 registry `dist.integrity` 与最终 tgz
+完全一致时跳过。上述工作流门禁仍需由真实新 RC 运行产生最终证据。
+
 2026-07-27 本地最终门禁：
 
-- Node.js：89 项测试全部通过，生产模块行覆盖率 82.13%，门禁通过；
-- Go：fmt/vet/fuzz/测试与覆盖率门禁通过，总覆盖率 79.4%；所有规定的 M2 数据面包
+- Node.js：95 项测试全部通过；六个 npm bootstrap 生产模块行覆盖率均不低于 80%；
+- Go：fmt/vet/fuzz/测试与覆盖率门禁通过，总覆盖率 79.6%；所有规定的 M2 数据面包
   均不低于 80%；
 - `go test -race ./... -count=1` 全包通过；
 - migration fixture、八份版本 manifest、一致性与 npm workspace pack 预检通过；
 - Windows/macOS/Linux 的 amd64/arm64 Core 与 stable bridge 共 12 个二进制构建通过。
+
+## Linux Container 的真实 Release lifecycle uninstall
+
+2026-07-27 使用 GitHub Release `v0.2.0-rc.3` 的真实 Linux amd64 Core，以及当前未提交
+工作树构建的 `0.3.0-rc.1` Linux amd64 Core/bridge，在只读挂载工作区的
+`node:24-bookworm-slim` 容器中执行完整 lifecycle。结果为 upgrade generation `2`、
+rollback generation `3`，三个稳定 Hook 字节不变，两次 bridge fixture 和两次 doctor
+均通过。随后不是 dry-run，而是实际执行统一产品卸载和 npm bootstrap Core 清理：
+
+- 受管 runtime、stable bridge 和 `active.json` 均已删除；
+- Codex、Claude Code、Kimi Code、OpenCode、Qoder 的隔离 Hook 均已删除；
+- QoderWork 和 TRAE 在 Linux 上不适用，卸载报告分别给出明确 skipped/no-op；
+- 配置与状态哨兵按默认保留策略保持原字节。
+
+该证据验证了 Linux 隔离环境中的产品级实际卸载，不等于 Linux 实机 systemd user 服务
+迁移；真实新 tag/draft Release 下载复验也仍未执行。
 
 ## 真实上一 Release 资产的本地生命周期 smoke
 
@@ -249,6 +273,26 @@ queue。
 输出只保留 AgentBell channel id、`ok` 和 `sentAt`。这证明现有 bot 通道与真实飞书
 transport 可达，也证明修复后的 CLI 输出不泄露 chat id；它不证明 M2 一次性绑定流程、
 user 模式、多通道策略或后台 service 投递。
+
+## macOS 产品 Hook 的当前候选复验
+
+2026-07-27 将当前 `0.3.0-rc.1` 受管候选部署到 stable bridge/版本目录后，在 macOS
+26.4 arm64 上复验已安装产品：
+
+- Kimi Code 使用安装后的新 CLI 会话产生 `task.completed`，`diagnose` 的
+  `runtimeVerified` 为 true；
+- QoderWork CN 0.9.12 与 TRAE CN 3.3.79 的自有 Hook 从工作树开发 Core 迁移到受管
+  版本 Core，迁移前均生成带哈希的配置备份；两个真实 GUI 新任务都产生了配置变更后的
+  `task.completed` proof，`runtimeVerified` 为 true；
+- Codex 0.146 的 AgentBell Stop Hook 已被 `/hooks` 发现，但当前位置显示 modified /
+  review required；未绕过产品信任边界，因此本轮没有新的 Codex proof；
+- 本机 Claude Code 2.0.19 会在 settings 中出现未知 `StopFailure` 时把整个 Hook 对象
+  视为零匹配。候选实现现按官方版本阈值协商事件集与命令形态，并通过自动迁移、卸载、
+  audit、race 和 Windows 交叉编译测试；真实用户 settings 迁移被本机审批系统拦下，
+  因而本轮也没有新的 Claude proof。
+
+QoderWork/TRAE 继续使用各自独立的版本化 Core Hook，而 Codex/Claude/Kimi 使用 stable
+bridge；不能把前三项的局部 macOS 证据解释为五个产品、三平台或 IDE Surface 矩阵完成。
 
 ## 当前本机性能记录
 

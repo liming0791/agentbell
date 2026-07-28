@@ -75,14 +75,14 @@ tag/manifest 校验
 -> 六目标 Core + bridge 可重复构建
 -> 最终 Linux amd64 Core 的真实 TLS/HTTPS pairing/ACK/recovery smoke
 -> Core 确定性 zip/tar.gz + bridge 原生文件
--> checksums + Technical Preview manifest
--> 下载上一 Release，执行 upgrade/Hook 字节不变/fixture/rollback/uninstall lifecycle smoke
+-> 两个最终 npm tgz
+-> 覆盖 Core、bridge 和 npm tgz 的 checksums + Technical Preview manifest
+-> 下载上一 Release，执行 upgrade/Hook 字节不变/fixture/rollback/实际 uninstall lifecycle smoke
 -> 本地 HTTP bootstrap 下载/校验/执行/清理 smoke
 -> GitHub artifact attestation（仓库能力允许时）
--> draft GitHub Release
--> 从 draft Release API 下载、校验、安装 Core/bridge 并复验插件
--> npm pack/publish
--> 上传 npm tgz
+-> draft GitHub Release（已公开的同 tag Release 禁止覆盖）
+-> 从 draft Release API 下载、校验、安装 Core/bridge，复验插件并安装 smoke 最终 npm tgz
+-> npm publish
 -> 发布完整 GitHub Release
 ```
 
@@ -95,15 +95,29 @@ npm 发布前通过与 PR CI 相同的 `smoke:https`，不会用重新临时构�
 安装 Core、stable bridge 和 `active.json`。Release workflow 会先下载上一正式 RC，
 以 M1 真实无 `schemaVersion` 的 `install.json` 作为起点，验证旧版本被纳入
 `previous`、升级前后三个稳定 Hook 字节不变、fixture 经 bridge 入队、升级和回滚后的
-bridge doctor 均健康，以及产品卸载 dry-run。macOS 真实 LaunchAgent 的备份迁移和
+bridge doctor 均健康，以及实际执行产品卸载和 bootstrap Core 清理，并断言 active
+Core、stable bridge、active pointer 和五个 Linux 适用的隔离 Adapter Hook 被删除；
+QoderWork/TRAE 作为 Linux 不适用目标必须在统一卸载报告中明确标记 skipped/no-op，
+配置和状态数据按默认策略保留。macOS 真实 LaunchAgent 的备份迁移和
 stable bridge → 后台服务 → 飞书闭环已通过；Windows/Linux 的真实服务迁移仍由
 [M2 实施计划](./m2-execution-plan.md) 的实机矩阵跟踪。
+自动 Release lifecycle 固定在 Linux 隔离 runner；macOS LaunchAgent label 和 Windows
+计划任务名称是用户全局资源，因此这两个平台只有在一次性测试用户上显式设置
+`AGENTBELL_RELEASE_SMOKE_DISPOSABLE_USER=1` 才允许执行实际卸载，普通本机默认拒绝。
 
 五个插件在同一 Release 中生成严格文件 manifest，并使用固定 GitHub
 OIDC/repository/tag workflow identity 做 Cosign keyless 签名。workflow 在发布前由
 最终 host Core 验证 staging；draft Release 上传后、npm 发布前，再下载每个 tarball、
 解包并由已安装 Core 执行 `plugin verify`。任一签名身份、文件集或 hash 不匹配都会
 阻止不可逆的 npm 发布和 Release 公开。
+
+两个 npm tgz 在 build job 中只生成一次，并在 release metadata 中记录 SHA-256 和
+大小。publish job 从 draft Release 重新下载这两个精确 tgz，校验 checksum/manifest，
+安装到隔离前缀，并分别执行 CLI help 和 Hook runtime Stop fixture；通过后才允许
+`npm publish`。npm registry 不支持两个包的跨包原子事务：若第一个 publish 成功后第二个
+失败，相同 workflow 重跑只有在 registry `dist.integrity` 与最终 tgz 的 SHA-512
+完全一致时才跳过已存在版本并继续发布缺失包；同版本不同字节会停止。已公开的 GitHub Release
+禁止 `--clobber` 重跑，也不会因重跑失败被改回 draft；需要修复时发布新版本。
 
 M0.5 没有代码签名凭据。workflow 只接受
 `AGENTBELL_SIGNATURE_STATUS=technical-preview`；其他值会失败，避免把未签名产物标成
@@ -126,7 +140,8 @@ signed。
 4. 若 npm 要求包先存在，维护者先完成一次最小首发，再立即切换 OIDC。
 
 `v0.2.0-rc.3` 等预发布版本发布到 npm `next` dist-tag；正式版本使用 `latest`。相同版本
-已存在时 workflow 会跳过 npm publish，因此 GitHub Release 上传可以安全重跑。
+已存在时 workflow 会跳过 npm publish；只允许仍为 draft 的 GitHub Release 重跑和替换
+资产，公开 Release 必须保持不可变。
 完成上述配置后，把仓库变量 `NPM_PUBLISH_ENABLED` 设为 `true`。变量未开启时，Release
 仍会发布已验证的 Core 和两个 npm tgz，但不会向 npm registry 发起未经授权的 publish。
 
@@ -145,5 +160,6 @@ git push origin v0.3.0-rc.1
 
 发布失败时保留 draft Release 供诊断，不对外显示为完整发布。npm 版本不可覆盖；修复后
 发布新的 prerelease 或 patch 版本，不强制改写 Git tag。
-完整 Release 发布后还会使用当前 job 的短期 GitHub token 走私有仓库 API 安装并执行
-Core；该 smoke 失败时，workflow 会把 Release 自动退回 draft。
+所有下载复验和安装 smoke 都在 Release 仍为 draft 时完成；仅这个 workflow 创建或接管
+的 draft 会在失败补偿中保持 draft。已公开 Release 不再允许覆盖资产，也不会被重跑改回
+draft。

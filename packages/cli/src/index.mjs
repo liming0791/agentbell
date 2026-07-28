@@ -66,6 +66,60 @@ function optionValue(options, name, fallback) {
   return value;
 }
 
+function parseReleaseVersion(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(value);
+  if (!match) {
+    throw new Error(`Invalid AgentBell version: ${value}`);
+  }
+  return {
+    core: match.slice(1, 4).map(Number),
+    prerelease: match[4]?.split(".") || []
+  };
+}
+
+export function compareReleaseVersions(left, right) {
+  const leftVersion = parseReleaseVersion(left);
+  const rightVersion = parseReleaseVersion(right);
+  for (let index = 0; index < 3; index++) {
+    if (leftVersion.core[index] !== rightVersion.core[index]) {
+      return leftVersion.core[index] - rightVersion.core[index];
+    }
+  }
+  if (leftVersion.prerelease.length === 0) {
+    return rightVersion.prerelease.length === 0 ? 0 : 1;
+  }
+  if (rightVersion.prerelease.length === 0) {
+    return -1;
+  }
+  const length = Math.max(
+    leftVersion.prerelease.length,
+    rightVersion.prerelease.length
+  );
+  for (let index = 0; index < length; index++) {
+    const leftPart = leftVersion.prerelease[index];
+    const rightPart = rightVersion.prerelease[index];
+    if (leftPart === rightPart) {
+      continue;
+    }
+    if (leftPart === undefined) {
+      return -1;
+    }
+    if (rightPart === undefined) {
+      return 1;
+    }
+    const leftNumeric = /^\d+$/.test(leftPart);
+    const rightNumeric = /^\d+$/.test(rightPart);
+    if (leftNumeric && rightNumeric) {
+      return Number(leftPart) - Number(rightPart);
+    }
+    if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    }
+    return leftPart.localeCompare(rightPart);
+  }
+  return 0;
+}
+
 function printTransactionResult(result, asJSON) {
   if (asJSON) {
     console.log(JSON.stringify(result, null, 2));
@@ -209,8 +263,14 @@ export async function run(args, dependencies = {}) {
     const active = await (
       dependencies.resolveActiveCore || resolveActiveCore
     )();
-    const version = active?.version || packageMetadata.version;
-    const executable = active?.path || coreInstallPath({ version });
+    const resolveCorePath = dependencies.coreInstallPath || coreInstallPath;
+    let version = active?.version || packageMetadata.version;
+    let executable = active?.path || resolveCorePath({ version });
+    if (command === "uninstall" && active &&
+        compareReleaseVersions(packageMetadata.version, active.version) > 0) {
+      version = packageMetadata.version;
+      executable = resolveCorePath({ version });
+    }
     let exitCode;
     try {
       exitCode = await (dependencies.runCore || runCore)(
@@ -231,7 +291,7 @@ export async function run(args, dependencies = {}) {
     }
     if (command === "uninstall" && !booleanFlagEnabled(options, "--dry-run")) {
       const result = await (dependencies.uninstallCore || uninstallCore)({
-        version
+        version: active?.version || version
       });
       if (!booleanFlagEnabled(options, "--json")) {
         console.log(
