@@ -66,6 +66,35 @@ CLI bootstrap 和 upgrade downloader 已改为先按 tag 查询、404 时安全�
 Draft tag，并增加认证 token 不出现在 URL、只进入 Authorization header 的回归测试。
 因此没有强移失败标签，而是以新 tag `v0.3.0-rc.2` 重跑并通过完整 stage。
 
+## 真实上一 Release → 最终 Draft lifecycle
+
+2026-07-28 使用已公开的上一版
+[Release `v0.2.0-rc.3`](https://github.com/liming0791/agentbell/releases/tag/v0.2.0-rc.3)
+和保持未公开的最终
+[Draft Release `v0.3.0-rc.2`](https://github.com/liming0791/agentbell/releases/tag/untagged-a996a2cbde2c8c6ae5c7)，
+在 [Release Actions run 30342246644](https://github.com/liming0791/agentbell/actions/runs/30342246644)
+完成独立 lifecycle 验证。验证 harness commit 为
+`76d0396a5b048c81dd9883de565d9a4243505d1f`，run 中保留
+`draft-release-lifecycle-evidence` artifact。结果：
+
+- 从两个真实 Release 边界下载资产，完整校验最终 Draft 的
+  `checksums.txt`、`release-manifest.json`、版本、tag commit 和
+  `technical-preview` 状态；
+- 解包上一 Release 的真实 npm CLI，以其 bootstrap 下载并安装
+  `0.2.0-rc.3` Core；安装后的 Core 字节与上一 Release 资产完全一致；
+- 升级到最终 Draft `0.3.0-rc.2` 后 active generation 为 2；三个稳定 Hook
+  文件逐字节不变，最终 stable bridge 字节与 Draft 资产一致；
+- upgrade 和 rollback 后各发送一次真实 Hook fixture，均成功进入持久队列；
+  两次 bridge doctor 均健康；
+- rollback 回 `0.2.0-rc.3` 后 active generation 为 3，Hook 仍逐字节不变，
+  stable bridge 未被旧版本覆盖；
+- 统一卸载真实执行：移除 active runtime、stable bridge、active state 和五个
+  Linux 可用 Adapter Hook；两个非 Linux Adapter 明确跳过；配置和状态保留项均在；
+- lifecycle 后再次确认目标仍为 `draft=true`、`prerelease=true`、27 个资产，
+  `@agentbell/cli@0.3.0-rc.2` 和
+  `@agentbell/hook-runtime@0.3.0-rc.2` 均由 npm registry 明确返回 E404；
+  build、stage、finalize job 全部 skipped，没有发布或改写 Release。
+
 2026-07-27 本地最终门禁：
 
 - Node.js：95 项测试全部通过；六个 npm bootstrap 生产模块行覆盖率均不低于 80%；
@@ -390,9 +419,13 @@ npm run perf:m2
 
 ## M2 退出前仍需补齐
 
-已完成：创建 `v0.3.0-rc.2`，真实 draft Release smoke 在 npm publish 前成功。
+已完成：
 
-1. 用真实上一 Release 和最终 draft Release 完成安装 → upgrade → Hook 字节不变 →
-   fixture 发送 → rollback → uninstall，并保存 Release/CI 链接；
-2. 补齐 macOS、Windows+WSL、Linux、SSH 和 container 的端到端记录；
-3. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。
+- 创建 `v0.3.0-rc.2`，真实 draft Release smoke 在 npm publish 前成功；
+- 用真实上一 Release 和最终 Draft Release 完成安装 → upgrade → Hook 字节不变 →
+  fixture 发送 → rollback → uninstall，并保存 Release/CI 链接。
+
+仍需：
+
+1. 补齐 macOS、Windows+WSL、Linux、SSH 和 container 的端到端记录；
+2. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。
