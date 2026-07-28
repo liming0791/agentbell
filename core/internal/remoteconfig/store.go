@@ -9,9 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 )
 
 const maximumSidecarBytes = 1 << 20
+
+var sidecarPublishMu sync.Mutex
 
 func LoadRemote(path string) (RemoteConfig, error) {
 	var result RemoteConfig
@@ -140,13 +143,17 @@ func save(path string, value any) error {
 		_ = os.Remove(temporaryPath)
 		return err
 	}
+	sidecarPublishMu.Lock()
 	if err := publishSidecar(temporaryPath, path); err != nil {
+		sidecarPublishMu.Unlock()
 		_ = os.Remove(temporaryPath)
 		return err
 	}
 	if err := setSidecarPermissions(path, 0o600); err != nil {
+		sidecarPublishMu.Unlock()
 		return err
 	}
+	sidecarPublishMu.Unlock()
 	if runtime.GOOS == "windows" {
 		return nil
 	}

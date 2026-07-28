@@ -364,18 +364,28 @@ func TestWaitRemoteOutboxDistinguishesAckTimeoutAndDead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ackResult := make(chan error, 1)
 	go func() {
 		time.Sleep(10 * time.Millisecond)
 		item, claimErr := outbox.Claim(time.Now().UTC(), time.Minute)
-		if claimErr == nil && item != nil {
-			_ = outbox.Ack(item, time.Now().UTC())
+		if claimErr != nil {
+			ackResult <- claimErr
+			return
 		}
+		if item == nil {
+			ackResult <- errors.New("queued item was not claimable")
+			return
+		}
+		ackResult <- outbox.Ack(item, time.Now().UTC())
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	state, err := waitRemoteOutbox(ctx, outbox, id, time.Millisecond)
 	if err != nil || state != relay.OutboxHistory {
 		t.Fatalf("ack state=%q err=%v", state, err)
+	}
+	if err := <-ackResult; err != nil {
+		t.Fatalf("ack transition: %v", err)
 	}
 
 	body, signature = remoteSignedOutboxFixture(
