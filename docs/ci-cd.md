@@ -144,11 +144,20 @@ signed。
 `finalize` job 使用 GitHub OIDC，不把长期 `NPM_TOKEN` 存入仓库。首次发布前需要一次外部
 配置：
 
-1. npm 账号拥有 `@agentbell` scope 和两个包名；
+1. npm 账号 `liming0791` 拥有
+   `@liming0791/agentbell-cli` 和 `@liming0791/agentbell-hook-runtime`；
 2. GitHub Environment 名为 `npm-publish`；
 3. 两个 npm 包的 Trusted Publisher 指向
    `liming0791/agentbell`、`release.yml`、`npm-publish`；
 4. 若 npm 要求包先存在，维护者先完成一次最小首发，再立即切换 OIDC。
+
+项目不得使用未验证所有权的品牌 scope。RC4 finalize 发现 `@agentbell` 已属于无关的
+第三方 npm Organization，因此 RC5 起包名固定为
+`@liming0791/agentbell-cli` 与 `@liming0791/agentbell-hook-runtime`。旧 Release 中
+`agentbell-cli-*.tgz` 仅作为历史 bootstrap/lifecycle 输入；RC5 及以后最终 npm 资产名为
+`liming0791-agentbell-cli-*.tgz` 和
+`liming0791-agentbell-hook-runtime-*.tgz`。改 scope 必须创建新版本和新 Tag，不得改写
+既有 Draft 或公开 Release。
 
 `v0.2.0-rc.3` 等预发布版本发布到 npm `next` dist-tag；正式版本使用 `latest`。相同版本
 已存在时 workflow 会跳过 npm publish；只允许仍为 draft 的 GitHub Release 重跑和替换

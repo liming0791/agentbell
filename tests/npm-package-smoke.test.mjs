@@ -14,8 +14,11 @@ function sha256(value) {
 test("npm package smoke verifies both final archives against release metadata", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agentbell-npm-smoke-"));
   context.after(() => rm(root, { recursive: true, force: true }));
-  const cli = path.join(root, "agentbell-cli-0.3.0-rc.1.tgz");
-  const hook = path.join(root, "agentbell-hook-runtime-0.3.0-rc.1.tgz");
+  const cli = path.join(root, "liming0791-agentbell-cli-0.3.0-rc.1.tgz");
+  const hook = path.join(
+    root,
+    "liming0791-agentbell-hook-runtime-0.3.0-rc.1.tgz"
+  );
   const cliBytes = Buffer.from("cli");
   const hookBytes = Buffer.from("hook");
   await writeFile(cli, cliBytes);

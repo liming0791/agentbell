@@ -60,6 +60,10 @@ Core 本地构建：`cd core && go build ./cmd/agentbell`。
 - Release 分两段：Tag push 或手动 `stage` 只创建并复验 Draft；只有从同一 Tag 手动
   `finalize`、重新下载验证全部 Draft 资产且 npm Trusted Publishing 已启用后，才允许
   发布两个 npm 包并把 GitHub Release 转为公开。失败不得重写或重新 draft 已公开 Release。
+- npm 正式包固定为 `@liming0791/agentbell-cli` 和
+  `@liming0791/agentbell-hook-runtime`；`@agentbell` 属于无关第三方，不得使用。RC5
+  起 npm tgz 带 `liming0791-agentbell-` 前缀；旧 Release 的无前缀 CLI tgz 仅用于
+  migration/lifecycle 输入。
 - 无公开生命周期 Hook 的产品（如 Kimi Work）不做轮询/UI 注入/Skill 软触发替代；
   解锁条件见 `TODO.md`。
 - Go 覆盖率门禁：总行 ≥75%；`event`/`queue`/`adapter`/`setup` 以及已进入 M2

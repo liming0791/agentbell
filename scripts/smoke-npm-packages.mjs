@@ -72,10 +72,10 @@ export async function verifyNpmArchiveMetadata({
     throw new Error("CLI and Hook runtime archives must be distinct files.");
   }
   const expectedNames = new Map([
-    [resolvedCLI, `agentbell-cli-${version}.tgz`],
+    [resolvedCLI, `liming0791-agentbell-cli-${version}.tgz`],
     [
       resolvedHookRuntime,
-      `agentbell-hook-runtime-${version}.tgz`
+      `liming0791-agentbell-hook-runtime-${version}.tgz`
     ]
   ]);
   const checksums = parseChecksums(await readFile(checksumsPath, "utf8"));
@@ -138,9 +138,9 @@ export async function smokeNpmPackages({
       path.resolve(cliArchive),
       path.resolve(hookRuntimeArchive)
     ]);
-    const modules = path.join(installRoot, "node_modules", "@agentbell");
-    const cliRoot = path.join(modules, "cli");
-    const hookRoot = path.join(modules, "hook-runtime");
+    const modules = path.join(installRoot, "node_modules", "@liming0791");
+    const cliRoot = path.join(modules, "agentbell-cli");
+    const hookRoot = path.join(modules, "agentbell-hook-runtime");
     for (const packageRoot of [cliRoot, hookRoot]) {
       const manifest = JSON.parse(
         await readFile(path.join(packageRoot, "package.json"), "utf8")

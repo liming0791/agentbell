@@ -26,7 +26,7 @@
 | M2-602 性能/压力 | stable bridge Hook p95、Relay/32 路 fan-out/queue benchmark、96 durable item stress gate | 本地通过 |
 | M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地通过；Actions run 30352561499 在 RC4 候选 `aa3ace2` 上 13/13 job 全绿 |
 | M2-604 实机矩阵 | 下表 | 未通过 |
-| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | `v0.3.0-rc.4` 最终 Draft stage 全部通过且 npm 未发布；manual finalize 尚未执行 |
+| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | RC4 Draft/真机 smoke 通过；finalize 安全发现 npm scope 冲突，RC5 已迁移到 `@liming0791`，待新 Draft/finalize |
 
 当前 Release 候选还增加了两段式人工发布闸门和四个不可逆发布前门禁：Tag push 或手动
 `stage` 只生成并复验 Draft，必须从同一 Tag 手动 `finalize` 才能进入 npm/公开发布；
@@ -39,6 +39,22 @@ npm registry 不提供两个包的跨包原子事务，首包成功、次包失�
 补偿模型描述成原子发布；重跑只在已发布版本的 registry `dist.integrity` 与最终 tgz
 完全一致时跳过。`stage` 门禁已由下述真实 RC 证明；`finalize`、npm Trusted
 Publishing 和公开 Release 仍未执行。
+
+## RC4 finalize 的 npm scope 阻断与 RC5 迁移
+
+2026-07-28 从精确 Tag `v0.3.0-rc.4` 执行
+[finalize run 30359369321](https://github.com/liming0791/agentbell/actions/runs/30359369321)。
+Draft metadata、27 个资产 checksum、Core/Bridge、五个插件和两个 npm tgz 复验均通过；
+首个 `npm publish` 对 `@agentbell/hook-runtime` 返回 `E404`，公开 GitHub Release
+步骤按设计 skipped。随后确认 `@agentbell` scope 已属于无关第三方项目，本仓库从初始
+提交起使用该名字但从未拥有或发布对应 npm 包。
+
+发布开关已恢复为 `false`，RC4 保持 Draft，两个旧 scope 目标包继续为 E404。RC5
+改用当前 npm 用户 scope：`@liming0791/agentbell-cli` 和
+`@liming0791/agentbell-hook-runtime`；npm pack 资产名相应增加 `liming0791-` 前缀。
+workflow、Draft 下载 smoke、manifest/checksum 测试、安装后模块路径和 finalize 的
+integrity 复验必须全部使用新名字。旧公开 Release 的 npm bootstrap asset 名不改，
+继续作为上一 Release lifecycle 输入。
 
 ## `v0.3.0-rc.2` 真实 Draft Release stage
 
