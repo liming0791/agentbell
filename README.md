@@ -11,10 +11,11 @@ AgentBell 是一个面向 Coding Agent CLI、IDE 和 Desktop Agent 的跨平台�
 审批提醒；完成通知继续使用 `Stop`。
 
 最新已发布版本为 `v0.2.0-rc.3` Technical Preview；当前源码候选版本为
-`v0.3.0-rc.1`。工作树已实现 Go 单文件 Core、持久队列、七个 Adapter、
+`v0.3.0-rc.4`。工作树已实现 Go 单文件 Core、持久队列、七个 Adapter、
 `agentbell setup`、`agentbell test`、三平台用户服务及 M2 本地能力
 （见 [M1 验收记录](./docs/m1-setup-validation.md) 和
-[M2 验收台账](./docs/m2-validation.md)）。`v0.3.0-rc.1` 尚未发布；
+[M2 验收台账](./docs/m2-validation.md)）。`v0.3.0-rc.4` 仅为未公开 Draft，
+GitHub Release 和 npm 均未发布；
 Node.js Hook runtime 仅保留为 M0 迁移期原型，不是正式 Hook 数据面。
 
 ## 首期范围
@@ -103,8 +104,9 @@ metadata-only outbox、`remote test`、独立 Host connector registry、WSL/SSH/
 无监听配对/拉取、HTTPS push 和后台调度。真实旧 Release 到本地候选的 lifecycle、
 macOS Host→Linux container stdio 以及隔离 Linux container TLS/HTTPS E2E 已通过。
 macOS 真实 M1 形态的 LaunchAgent 也已备份后迁移到 stable bridge，并通过后台飞书
-投递；它们仍是开发中能力：Windows/Linux 实机、独立跨主机端到端和真实新 RC Release
-流程尚未补齐，不能把这些局部证据解释为可用的 M2 产品流程。准确进度见
+投递；真实 macOS 还已完成上一公开 Release 安装、最终 Draft 升级、旧版回滚、后台
+飞书发送和统一卸载。它们仍是开发中能力：macOS 断网恢复、Windows/Linux 实机和
+独立跨主机端到端尚未补齐，不能把这些局部证据解释为可用的 M2 产品流程。准确进度见
 [M2 实施计划](./docs/m2-execution-plan.md#当前实现进度)。
 
 ## 目标体验

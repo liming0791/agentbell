@@ -39,9 +39,11 @@ M2 不改变 AgentBell 的产品边界：优先使用公开 Hook，不注入 Age
   恢复 legacy 服务定义；后续 rollback 只 restart stable bridge。严格 sidecar/部分
   投递账本回滚 preflight 已完成；macOS 真实 LaunchAgent 已完成备份迁移和后台飞书
   投递，Codex 0.146、Claude Code 2.0.19 和 Kimi Code 也已分别通过新任务/会话取得当前
-  generation 的 `task.completed` runtime proof。升级前后产品 Hook 字节不变、
-  Desktop/IDE Surface、最终 Release 运行及 Windows/Linux 实机升级/回滚尚未完成，
-  因此仍不能把局部实机结果解释为已发布的升级产品流程。
+  generation 的 `task.completed` runtime proof。真实 macOS 已用上一公开 Release 和
+  最终 `v0.3.0-rc.4` Draft 完成安装、升级、Hook 字节不变、后台发送、pre-M2 回滚和
+  统一卸载；pre-M2 回滚时由 checksum 校验的当前 M2 service Core 保持后台兼容。
+  Desktop/IDE Surface、macOS 断网恢复及 Windows/Linux 实机升级/回滚尚未完成，因此
+  仍不能把局部实机结果解释为已发布的升级产品流程。
 - Hook 冲突审计、只修复 AgentBell 自有条目的 reconcile 命令，以及插件
   manifest/file-set/兼容范围/身份策略校验域已进入 Core。外部 Hook 只报告不删除；
   基于官方 `sigstore-go` 的 exact-artifact、Fulcio/Rekor 与固定 OIDC/repository/workflow
@@ -58,9 +60,9 @@ M2 不改变 AgentBell 的产品边界：优先使用公开 Hook，不注入 Age
   bounded stdio 无监听配对已闭环；断连、ACK 丢失、崩溃恢复和精确去重已有 96 项
   durable stress gate。macOS Host→Linux container stdio 与同 Host 双 Linux container
   TLS/HTTPS E2E 已通过；独立物理主机、公网证书和真实飞书最终到达仍待验。
-- Draft PR #4 当前候选 `964a09f` 的 Actions run 30333419935 已完成 13/13 job；
+- Draft PR #4 的 RC4 候选 `aa3ace2` 在 Actions run 30352561499 已完成 13/13 job；
   它证明 M2-603 的跨平台自动门禁保持全绿，不替代 M2-604 的 Windows/Linux/远程实机
-  产品验收，也不替代 M2-605 的真实 draft Release lifecycle。
+  产品验收，也不代表 M2-605 的 manual finalize、npm 与公开 Release 已完成。
 - Release workflow 已拆为 `stage`/`finalize` 两次独立执行：Tag push 只留下验证后的
   Draft；维护者必须从同一 Tag 手动 finalize，重新下载复验 Draft 资产并完成 npm
   Trusted Publishing 后，才会把 GitHub Release 转为公开。
@@ -136,7 +138,8 @@ AgentBell data root/
 ```
 
 `active.json` 只包含 schemaVersion、generation、active/previous 受管版本、目标、
-Core checksum、stable bridge checksum 和 activation transaction id，不接受任意路径。
+Core checksum、stable bridge checksum、可选 pinned service version/checksum 和
+activation transaction id，不接受任意路径。
 bridge 按版本和目标推导受管 Core 路径，并拒绝
 目录逃逸、symlink/reparse point、缺失 checksum 或不在受管 bin 根内的目标。指针更新
 使用临时文件、flush、close、目录同步和原子替换。bridge 只负责：

@@ -19,14 +19,14 @@
 | M2-001～004 协议与迁移骨架 | `docs/adr/0003-m2-compatible-state-and-relay.md`、`core/testdata/migrations/`、严格 sidecar/queue tests、三平台 migration matrix | 本地与 Actions 通过 |
 | M2-101～104 设置与策略 | `core/internal/settings/`、`policy/`、`service/m2_test.go`、delivery ledger tests | 已实现 |
 | M2-201～204 一次性绑定 | `core/internal/binding/`、`app/bind_test.go`、setup binding tests | 自动测试已实现；现有 bot 通道真实发送通过，一次性绑定仍待验 |
-| M2-301～305 bridge/升级回滚 | `installstate/`、`bridge/`、`adapter/stable_bridge_test.go`、`tests/upgrade.test.mjs`、`scripts/release-lifecycle-smoke.mjs` | 真实旧 Release → `v0.3.0-rc.2` 生命周期与 macOS 真实 LaunchAgent 迁移通过 |
-| M2-401～404 Hook/插件签名 | `adapter/hook_audit_test.go`、`pluginverify/`、`tests/plugin-bundles.test.mjs`、`tests/release-workflow.test.mjs` | 自动测试和 `v0.3.0-rc.2` 真实 tag 的五个 keyless 插件 bundle 验证通过 |
+| M2-301～305 bridge/升级回滚 | `installstate/`、`bridge/`、`adapter/stable_bridge_test.go`、`tests/upgrade.test.mjs`、`scripts/release-lifecycle-smoke.mjs` | 真实旧 Release → `v0.3.0-rc.4` Draft 生命周期与 macOS LaunchAgent 迁移/回滚/卸载通过 |
+| M2-401～404 Hook/插件签名 | `adapter/hook_audit_test.go`、`pluginverify/`、`tests/plugin-bundles.test.mjs`、`tests/release-workflow.test.mjs` | 自动测试和 `v0.3.0-rc.4` 真实 tag 的五个 keyless 插件 bundle 验证通过 |
 | M2-501～506 Relay/Remote | `relay/`、`remote/`、`remoteconfig/`、`secretstore/`、`app/remote*_test.go`、`scripts/smoke-https-relay.mjs` | 自动测试、macOS Host→Linux container stdio 与隔离 Linux TLS/HTTPS E2E 通过；独立跨主机到飞书待验 |
 | M2-601 doctor | `doctorSchemaVersion=1`、顶层 doctor golden、bridge doctor、connector runtime proof tests | 本地通过；输出脱敏 |
 | M2-602 性能/压力 | stable bridge Hook p95、Relay/32 路 fan-out/queue benchmark、96 durable item stress gate | 本地通过 |
-| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地通过；Actions run 30333419935 在候选 `964a09f` 上 13/13 job 全绿 |
+| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地通过；Actions run 30352561499 在 RC4 候选 `aa3ace2` 上 13/13 job 全绿 |
 | M2-604 实机矩阵 | 下表 | 未通过 |
-| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | `v0.3.0-rc.2` 真实 draft stage 全部通过且 npm 未发布；manual finalize 尚未执行 |
+| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | `v0.3.0-rc.4` 最终 Draft stage 全部通过且 npm 未发布；manual finalize 尚未执行 |
 
 当前 Release 候选还增加了两段式人工发布闸门和四个不可逆发布前门禁：Tag push 或手动
 `stage` 只生成并复验 Draft，必须从同一 Tag 手动 `finalize` 才能进入 npm/公开发布；
@@ -94,6 +94,70 @@ Draft tag，并增加认证 token 不出现在 URL、只进入 Authorization hea
   `@agentbell/cli@0.3.0-rc.2` 和
   `@agentbell/hook-runtime@0.3.0-rc.2` 均由 npm registry 明确返回 E404；
   build、stage、finalize job 全部 skipped，没有发布或改写 Release。
+
+## 真实 macOS 上一 Release → 最终 Draft → rollback → uninstall
+
+2026-07-28 在 macOS 26.4 arm64 真机上，使用已公开的上一版
+[Release `v0.2.0-rc.3`](https://github.com/liming0791/agentbell/releases/tag/v0.2.0-rc.3)
+和保持未公开的最终
+[Draft Release `v0.3.0-rc.4`](https://github.com/liming0791/agentbell/releases/tag/untagged-2a09efecec2a168519ab)
+完成真实用户目录与 LaunchAgent 生命周期。最终 Draft commit 为
+`aa3ace2a5fdca03efe584af712b8a99cfa87aab1`；
+[PR CI 30352561499](https://github.com/liming0791/agentbell/actions/runs/30352561499)
+的 13 个 job 全部通过，
+[Release run 30352951065](https://github.com/liming0791/agentbell/actions/runs/30352951065)
+完成 build、Draft staging 与资产 smoke；上一 Release lifecycle 和 finalize job 均
+按触发条件 skipped。Linux 的自动上一 Release lifecycle 证据仍来自前述 RC2 run
+30342246644，最终 RC4 的完整 lifecycle 由本节 macOS 真机验证覆盖。
+两个 RC4 npm 包在 registry 均返回 `E404`。
+
+执行前创建权限为 `0700/0600` 的受保护备份，保存原 Core、active state、LaunchAgent、
+九个可能受影响的产品配置、上一 Release 与 Draft 资产及 SHA-256 清单。真实流程先用
+上一 Release npm CLI 下载并安装 `0.2.0-rc.3`；安装后的 Core SHA-256
+`ea77e428213bd94b86dc768e71b03aee2106a73c9f943741a451d87d9e71d0b4`
+与 Release 资产一致。随后安装并验证七个 macOS Adapter：Codex、Claude Code、
+Kimi Code、OpenCode、Qoder、QoderWork CN 和 TRAE CN。
+
+首次使用 RC3 验证时，真机发现两个自动 fixture 没覆盖的兼容问题：
+
+- rollback 原先让目标旧 Core 执行 `service restart`；旧 Core 没有该子命令。修复为
+  当前 Core 负责重启 stable bridge；
+- 修复后 active 切换成功，但旧 Core 严格拒绝当前 `config.json` 中的
+  `larkCliPath`，LaunchAgent 因而无法消费队列。失败事件保持在 durable queue，
+  恢复 RC3 后通过带审计字段的 `queue retry` 成功投递，最终 dead 归零。
+
+第二个问题在 RC4 中改为：pre-M2 rollback 的 Hook 继续分发到旧 active Core，
+`service-v1` 则使用 active state 中显式记录的 `serviceVersion` 和
+`serviceChecksum` 选择当前 M2 Core；Bridge 和 `bridge doctor` 都校验该二进制。
+这不修改或复制含凭据的 `config.json`。Node rollback、Go bridge/installstate/doctor
+回归、完整本地 CI 与三平台 PR CI 均通过后才创建新的不可变 RC4 Draft。
+
+最终 RC4 真机结果：
+
+- 从 Draft 下载的 CLI、Core、Bridge、checksums 和 manifest 与 GitHub asset digest
+  全部一致；Core SHA-256 为
+  `d903ac72d93a707f26daca16747ae0b0ec31fb8eb8cd9048734f6ae02a123049`，
+  stable bridge 为
+  `90eac7d503d0c6997a4f763a2980f2e59e2f1302b019050b14cb542f0b53b745`；
+- 升级到 RC4 后 active generation 为 8，LaunchAgent running；七个产品 Hook
+  SHA-256 与升级前逐字节一致。真实 metadata-only Codex Desktop Stop 经 stable
+  bridge → durable queue → LaunchAgent → 飞书投递，history 93→94，
+  pending/inflight/dead 均为 0；
+- rollback 到真实 `0.2.0-rc.3` 后 generation 为 9，active/service 分别为
+  `0.2.0-rc.3`/`0.3.0-rc.4`。进程树证明 stable bridge 实际启动 RC4
+  `service run --foreground`，七个 Hook 仍逐字节不变；第二条真实 fixture 使
+  history 94→95，pending/inflight/dead 仍为 0；
+- 统一卸载 dry-run 与实际执行均通过：LaunchAgent/plist、七个 AgentBell Hook、
+  active state、stable bridge 和 active `0.2.0-rc.3` runtime 均被移除；
+  OpenCode 独占插件文件删除，其他六个产品配置中无 AgentBell 标记且与各自安装前
+  精确备份 SHA-256 匹配；
+- `config.json` 与执行前备份 SHA-256 均为
+  `94ecea773c13b042578e8af69c4589b35f1833be50c800133bf62250a1e883c8`；
+  95 条 history、交易日志、诊断备份和非 active 版本缓存按默认保留策略保留，
+  pending/inflight/dead 为 0，所有 Adapter receipt 已移除。
+
+该记录关闭 macOS 上真实 Release 安装、Draft 升级、旧 Release 回滚、登录服务持续
+发送、七 Adapter 精确卸载与默认保留项验证；不替代 Windows/Linux 实机与断网恢复。
 
 2026-07-27 本地最终门禁：
 
@@ -394,13 +458,13 @@ npm run perf:m2
 | --- | --- | --- | --- | --- |
 | 飞书 user/bot 一次性绑定 | 既有 bot 通道直接发送通过；一次性绑定与 user 模式待验 | 待验 | 待验 | Host 绑定后复用，待验 |
 | 设置/模板/免打扰/多通道 | 待验 | 待验 | 待验 | Host policy，待验 |
-| 安装、升级、自动回滚 | 真实 M1→本地候选升级通过；自动回滚仅自动故障测试 | 待验 | 待验 | shim 独立升级，待验 |
+| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | 待验 | 待验 | shim 独立升级，待验 |
 | Codex/Claude/Kimi stable Hook | Codex 0.146、Claude Code 2.0.19、Kimi Code 均由新任务/会话取得 generation 2 `task.completed` proof；Desktop/IDE Surface 矩阵仍待验 | 待验 | 待验 | 按产品运行位置待验 |
-| 登录服务重启/断网恢复 | LaunchAgent 迁移重启与后台投递通过；断网待验 | 待验 | 待验 | 待验 |
+| 登录服务重启/断网恢复 | LaunchAgent 升级/回滚重启与两次后台飞书投递通过；断网待验 | 待验 | 待验 | 待验 |
 | WSL host-pull，无 listener | 不适用 | 待验 | 不适用 | 待验 |
 | SSH strict host-key + tunnel | 可作 Host，待验 | 可作 Host，待验 | 可作 Host，待验 | 待验 |
 | Container stdio/HTTPS | 本机 Linux arm64 container stdio host-pull 与隔离 TLS/HTTPS E2E 通过；真实飞书待验 | 可作 Host，待验 | 同 Host 双 container TLS/HTTPS E2E 通过；独立主机待验 | container stdio 与 TLS/HTTPS 本机通过；跨主机待验 |
-| 统一卸载及默认保留 | 自动预检/双确认通过，实机待验 | 自动 fixture 通过，实机待验 | 自动 fixture 通过，实机待验 | credential/peer 默认保留与脱敏自动通过，实机待验 |
+| 统一卸载及默认保留 | 七 Adapter、LaunchAgent、active runtime 实机卸载通过；配置、95 条 history、证据和非 active 缓存保留 | 自动 fixture 通过，实机待验 | 自动 fixture 通过，实机待验 | credential/peer 默认保留与脱敏自动通过，实机待验 |
 
 ## 单次实机记录模板
 
@@ -421,11 +485,12 @@ npm run perf:m2
 
 已完成：
 
-- 创建 `v0.3.0-rc.2`，真实 draft Release smoke 在 npm publish 前成功；
-- 用真实上一 Release 和最终 Draft Release 完成安装 → upgrade → Hook 字节不变 →
-  fixture 发送 → rollback → uninstall，并保存 Release/CI 链接。
+- 创建 `v0.3.0-rc.4`，真实 Draft Release smoke 在 npm publish 前成功；
+- 用真实上一 Release 和 RC2 Draft 在自动 Linux 隔离环境完成 lifecycle，并用最终
+  RC4 Draft 在 macOS 真机完成安装 → upgrade → Hook 字节不变 → fixture 发送 →
+  rollback → uninstall；Release/CI 链接均已保存。
 
 仍需：
 
-1. 补齐 macOS、Windows+WSL、Linux、SSH 和 container 的端到端记录；
+1. 补齐 macOS 断网恢复，以及 Windows+WSL、Linux、SSH 和 container 的端到端记录；
 2. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。

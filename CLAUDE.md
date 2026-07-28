@@ -48,7 +48,9 @@ Core 本地构建：`cd core && go build ./cmd/agentbell`。
   还必须显式设置安装用户的 `HOME` 和固定 `PATH`，否则后台进程可能无法读取 Keychain。
   首次 M1→M2 upgrade 写入 active state 后必须由新 Core 执行 `service install`，把旧
   版本化服务定义迁到 stable bridge；若失败且旧安装没有 active state，补偿必须由旧
-  Core 再执行 `service install` 恢复 legacy 定义。普通 rollback 只 restart stable bridge。
+  Core 再执行 `service install` 恢复 legacy 定义。普通 rollback 只 restart stable
+  bridge；回滚到不能解析当前配置的 pre-M2 Core 时，Hook 使用旧 active Core，
+  `service-v1` 必须使用 active state 中 checksum 校验的当前 M2 service Core。
 - 产品卸载使用 `agentbell uninstall` 统一预检并移除服务与七个 Adapter Hook；Core
   进程退出后由 npm bootstrap 删除其管理的精确版本目录，默认保留配置、队列、远程
   sidecar/peer 和诊断数据；远程私钥只有同时传入删除与确认参数才可删除。

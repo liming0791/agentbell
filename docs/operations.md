@@ -191,14 +191,16 @@ npm bootstrap 另有 `upgrade --to <version>`、`rollback` 和 `versions` 的事
 smoke 和失败补偿；App 与三个旧 Adapter 已使用 active generation。sidecar 回滚
 preflight、`plugin verify` 和五个插件的 Release keyless 签名/下载后复验已经接入自动
 测试与工作流。跨旧 Release 的自动 lifecycle smoke 已接入 workflow；macOS 真实
-LaunchAgent 的备份迁移与后台飞书投递已通过，真实新 RC 运行和 Windows/Linux
-服务迁移仍未完成。
+LaunchAgent 的备份迁移、最终 `v0.3.0-rc.4` Draft 升级、旧版回滚、后台飞书投递和
+统一卸载已通过；macOS 断网恢复与 Windows/Linux 服务迁移仍未完成。
 首次从 M1 升级时，bootstrap 会校验旧式 `install.json` 并把唯一的受管旧版本纳入
 `previous`；若 `bin/` 中有多个有效旧版本，必须使用
 `upgrade --from <legacy-version> --to <version>` 明确选择，不能按版本号猜测。服务切换
 时，新 Core 在 active state 落盘后执行 `service install`，把旧服务定义迁到 stable
 bridge；失败会移除新 active pointer，并由旧 Core 重装 legacy service。显式 rollback
-保留当前协议版本的 stable bridge，继续验证其独立 checksum，并只重启服务。
+保留当前协议版本的 stable bridge，继续验证其独立 checksum，并只重启服务；若目标
+pre-M2 Core 不能解析当前配置，Hook 仍使用旧 active Core，`service-v1` 使用 active
+state 中 checksum 校验的当前 M2 service Core。
 Technical Preview 默认只在隔离数据目录执行 `--dry-run` 或自动 fixture；真实安装的
 非 dry-run 升级必须先备份平台服务定义、受管 `bin/` 和当前 Core，并取得明确授权。
 

@@ -19,7 +19,9 @@ M1 `config.json` 严格拒绝未知字段，queue reader 严格要求 `queueVers
 2. queueVersion 暂时保持 1；逐通道 delivery ledger、defer 和 disposition 使用旧 Core
    会忽略的可选字段。存在部分成功 ledger 时禁止静默回滚。
 3. Codex、Claude Code、Kimi Code Hook 和三平台登录服务迁移到版本无关的原生 bridge。
-   bridge 只支持 `hook-v1`、`service-v1` 白名单，并通过原子 active pointer 分发到 Core。
+   bridge 只支持 `hook-v1`、`service-v1` 白名单，并通过原子 active pointer 分发到
+   Core。回滚到不能解析当前配置的 pre-M2 Core 时，Hook 分发到旧 active Core，
+   `service-v1` 使用 active state 中 checksum 校验的当前 M2 service Core。
 4. runtime proof 增加 bridge protocol、Core version 和 activation generation；
    `diagnose` 不接受其他 generation 的旧 proof。
 5. NotificationEvent v1 保持不变；远程传输新增 RelayEnvelope v1。远端 Hook 只写 durable
@@ -34,6 +36,8 @@ M1 `config.json` 严格拒绝未知字段，queue reader 严格要求 `queueVers
 ## 后果
 
 - M2 新 Core 可以在缺少 sidecar/ledger 时保持 M1 行为，升级失败可原子恢复 previous。
+- pre-M2 rollback 不需要改写或复制含凭据的 `config.json`，旧 Core 也不会因新字段
+  导致后台服务持续退出。
 - 首次把三个旧 Hook 迁移到 bridge 仍需按产品要求重新加载；之后升级/回滚不再修改
   Hook 命令。
 - WSL 不需要开放 Host HTTP 端口；SSH/容器也不需要三套独立数据面。

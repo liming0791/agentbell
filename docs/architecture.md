@@ -67,16 +67,22 @@ Kimi Code Hook 以及登录服务固定调用 bridge，由 bridge 校验 active 
 Core。这样后续
 升级/回滚不需要重写 Hook 或服务定义。当前工作树已接通 active-state App wiring、
 generation-aware runtime proof、stable Service 定义和 `service restart`；跨旧 Release
-升级/Hook 字节不变/回滚/卸载的自动 smoke 已接入发布流水线，真实新 RC 运行尚未完成。
+升级/Hook 字节不变/回滚/卸载的自动 smoke 已接入发布流水线；最终
+`v0.3.0-rc.4` Draft 已完成 Linux 自动 smoke 和 macOS 真机生命周期。
 首次从 M1 迁移时，bootstrap 会识别并校验旧式无 `schemaVersion` 的 `install.json`；
 只有一个有效旧版本时自动纳入 `previous`，存在多个候选时要求显式 `--from`，不能猜测。
 首次切换在 active state 落盘后由新 Core 执行 `service install`，把原先直接调用
 版本化 Core 的平台服务定义改为 stable bridge；若切换失败且旧安装没有 active state，
 补偿会在恢复旧状态后由旧 Core 重装 legacy 服务定义。已有 M2 active state 的升级和
-显式 rollback 继续只重启 stable bridge。macOS 真实 LaunchAgent 已完成一次
-M1 形态到本地 `0.3.0-rc.1` 候选的备份迁移和后台飞书投递；Windows/Linux 与真实
-Release 仍待验。
+显式 rollback 继续只重启 stable bridge。macOS 真实 LaunchAgent 已完成 M1 形态迁移，
+以及真实上一 Release → 最终 `v0.3.0-rc.4` Draft → 旧版 rollback → 统一卸载；
+升级和回滚后的后台飞书投递均通过。macOS 断网恢复与 Windows/Linux 实机仍待验。
 rollback 保留当前协议版本的 stable bridge，并从 active state 校验其独立 checksum；
+若目标是不能解析当前 M2 配置的 pre-M2 Core，Hook 仍分发到回滚目标，但 `service-v1`
+使用 active state 中显式记录且校验 checksum 的当前 M2 service Core。这样不改写
+`config.json`、不复制其中的凭据，也不会让旧 Core 因 `larkCliPath` 等新字段反复退出；
+`bridge doctor` 同时报告 active Core 与 pinned service Core。回到 M2 版本时取消该
+service pin，恢复单一 active Core。
 安装事务 id 与后续 activation/rollback 事务 id 不要求相同。
 
 远程事件继续使用 NotificationEvent v1 作为载荷，在外层增加独立 RelayEnvelope v1。

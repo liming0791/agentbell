@@ -78,8 +78,9 @@ Claude Code 和 Windows/Linux 服务管理当前通过自动 fixture、Go 测试
   WSL/SSH/container pull、无监听 stdio 配对与 HTTPS push 的用户级 service 调度。
   本地 migration/lifecycle/压力 smoke、macOS Host→Linux container stdio E2E、
   隔离 Linux container TLS/HTTPS E2E、macOS 真实 LaunchAgent 备份迁移与后台飞书
-  投递，以及跨平台 workflow 已接通；真实新 RC、Windows/Linux 实机和独立跨主机
-  证据仍未完成，不能作为 M2 产品交付。
+  投递、真实上一 Release → 最终 Draft → rollback → uninstall，以及跨平台 workflow
+  已接通；macOS 断网恢复、Windows/Linux 实机和独立跨主机证据仍未完成，不能作为
+  M2 产品交付。
 - 详细任务、协议、依赖关系和退出证据见
   [M2 实施计划](./m2-execution-plan.md)。
 - 用一次性绑定码承接桌面 CLI 与飞书会话的关联。
