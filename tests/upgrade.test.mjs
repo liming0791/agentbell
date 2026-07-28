@@ -870,6 +870,35 @@ test("rollback dry-run is read-only and service failure restores active state", 
   );
 });
 
+test("rollback restarts the stable bridge through the current Core", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const dependencies = {
+    dataRoot,
+    platform: "linux",
+    architecture: "x64",
+    downloadBundle: async ({ version }) => releaseBundle(version),
+    smokeCore: async () => {},
+    restartService: async () => {}
+  };
+  await upgrade({ ...dependencies, toVersion: "0.2.0-rc.3" });
+  await upgrade({ ...dependencies, toVersion: "0.3.0-rc.2" });
+  let restartRequest;
+
+  const result = await rollback({
+    ...dependencies,
+    restartService: async (request) => {
+      restartRequest = request;
+    }
+  });
+
+  assert.equal(result.activeVersion, "0.2.0-rc.3");
+  assert.equal(restartRequest.active.activeVersion, "0.2.0-rc.3");
+  assert.match(
+    restartRequest.corePath,
+    /0\.3\.0-rc\.2[\\/]agentbell$/
+  );
+});
+
 test("version listing reports empty and invalid managed installs", async (context) => {
   const dataRoot = await temporaryDataRoot(context);
   const empty = await listVersions({

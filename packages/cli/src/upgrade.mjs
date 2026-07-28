@@ -2005,7 +2005,10 @@ export async function rollback({
     await atomicJSON(activeStatePath(dataRoot), nextActive);
     try {
       await restartService({
-        corePath: installed.corePath,
+        // The rollback target may predate service-management commands. The
+        // current Core remains the transaction controller and must restart
+        // the version-independent bridge after the active pointer changes.
+        corePath: currentInstalled.corePath,
         bridgePath: stableBridgePath({ dataRoot, platform }),
         active: nextActive
       });
