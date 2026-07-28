@@ -7,7 +7,7 @@
 | 记录日期 | 2026-07-28 |
 | 本地实现 | P0～P6 自动化与本地门禁已实现 |
 | 发布状态 | 未发布，仍为 Technical Preview / Pilot |
-| M2 退出结论 | **未通过**：真实 Release、三平台完整矩阵和独立跨主机实机证据尚未产生 |
+| M2 退出结论 | **未通过**：真实 draft RC 已通过；最终发布、三平台完整矩阵和独立跨主机实机证据尚未完成 |
 
 本台账只记录可复现证据，不把 mock、交叉编译或自动 fixture 描述成实机通过。Adapter
 等级继续由 `docs/adapter-contract.md` 的产品实机矩阵决定。
@@ -19,14 +19,14 @@
 | M2-001～004 协议与迁移骨架 | `docs/adr/0003-m2-compatible-state-and-relay.md`、`core/testdata/migrations/`、严格 sidecar/queue tests、三平台 migration matrix | 本地与 Actions 通过 |
 | M2-101～104 设置与策略 | `core/internal/settings/`、`policy/`、`service/m2_test.go`、delivery ledger tests | 已实现 |
 | M2-201～204 一次性绑定 | `core/internal/binding/`、`app/bind_test.go`、setup binding tests | 自动测试已实现；现有 bot 通道真实发送通过，一次性绑定仍待验 |
-| M2-301～305 bridge/升级回滚 | `installstate/`、`bridge/`、`adapter/stable_bridge_test.go`、`tests/upgrade.test.mjs`、`scripts/release-lifecycle-smoke.mjs` | 真实旧 Release asset 生命周期与 macOS 真实 LaunchAgent 迁移通过；真实新 RC 待验 |
-| M2-401～404 Hook/插件签名 | `adapter/hook_audit_test.go`、`pluginverify/`、`tests/plugin-bundles.test.mjs`、`tests/release-workflow.test.mjs` | 自动测试已实现；真实 tag keyless bundle 待验 |
+| M2-301～305 bridge/升级回滚 | `installstate/`、`bridge/`、`adapter/stable_bridge_test.go`、`tests/upgrade.test.mjs`、`scripts/release-lifecycle-smoke.mjs` | 真实旧 Release → `v0.3.0-rc.2` 生命周期与 macOS 真实 LaunchAgent 迁移通过 |
+| M2-401～404 Hook/插件签名 | `adapter/hook_audit_test.go`、`pluginverify/`、`tests/plugin-bundles.test.mjs`、`tests/release-workflow.test.mjs` | 自动测试和 `v0.3.0-rc.2` 真实 tag 的五个 keyless 插件 bundle 验证通过 |
 | M2-501～506 Relay/Remote | `relay/`、`remote/`、`remoteconfig/`、`secretstore/`、`app/remote*_test.go`、`scripts/smoke-https-relay.mjs` | 自动测试、macOS Host→Linux container stdio 与隔离 Linux TLS/HTTPS E2E 通过；独立跨主机到飞书待验 |
 | M2-601 doctor | `doctorSchemaVersion=1`、顶层 doctor golden、bridge doctor、connector runtime proof tests | 本地通过；输出脱敏 |
 | M2-602 性能/压力 | stable bridge Hook p95、Relay/32 路 fan-out/queue benchmark、96 durable item stress gate | 本地通过 |
 | M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地通过；Actions run 30333419935 在候选 `964a09f` 上 13/13 job 全绿 |
 | M2-604 实机矩阵 | 下表 | 未通过 |
-| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | workflow 已接线且本地旧 Release asset/TLS smoke 通过；真实新 RC 未运行 |
+| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | `v0.3.0-rc.2` 真实 draft stage 全部通过且 npm 未发布；manual finalize 尚未执行 |
 
 当前 Release 候选还增加了两段式人工发布闸门和四个不可逆发布前门禁：Tag push 或手动
 `stage` 只生成并复验 Draft，必须从同一 Tag 手动 `finalize` 才能进入 npm/公开发布；
@@ -37,7 +37,34 @@ smoke 这两个 tgz；已公开的同 tag Release 不允许 `--clobber` 或在�
 npm registry 不提供两个包的跨包原子事务，首包成功、次包失败时仍需以同一版本重跑
 补齐，不能把该
 补偿模型描述成原子发布；重跑只在已发布版本的 registry `dist.integrity` 与最终 tgz
-完全一致时跳过。上述工作流门禁仍需由真实新 RC 运行产生最终证据。
+完全一致时跳过。`stage` 门禁已由下述真实 RC 证明；`finalize`、npm Trusted
+Publishing 和公开 Release 仍未执行。
+
+## `v0.3.0-rc.2` 真实 Draft Release stage
+
+2026-07-28 创建并推送 tag `v0.3.0-rc.2`，精确指向 commit
+`ef210e7a8fd29a17d47687ea734443ac7131d7d7`。对应
+[Release Actions run 30338745040](https://github.com/liming0791/agentbell/actions/runs/30338745040)
+成功，真实 [Draft Release](https://github.com/liming0791/agentbell/releases/tag/untagged-a996a2cbde2c8c6ae5c7)
+保持 `draft=true`、`prerelease=true`，包含 27 个最终资产。证据包括：
+
+- 六目标 Core 和六目标 stable bridge 构建、Linux Core TLS/HTTPS smoke 通过；
+- 五个插件完成 keyless 签名，并由最终 host Core 验证；
+- 从真实上一 Release 下载旧 Core，完成安装 → 升级 → Hook 字节不变 → fixture
+  发送 → rollback → uninstall；
+- 创建 Draft 后重新从 Draft 下载 Core/bridge、五个插件 archive 和两个最终 npm
+  tgz，bootstrap 安装、插件验证、checksum/release manifest 与 npm package smoke
+  全部通过；
+- `Re-verify and publish the draft release` job 明确为 skipped，stage 最后一步确认
+  Release 继续保持 Draft；npm registry 对
+  `@agentbell/cli@0.3.0-rc.2` 与
+  `@agentbell/hook-runtime@0.3.0-rc.2` 均返回 `E404`，证明本次 stage 没有提前发布 npm。
+
+首次 `v0.3.0-rc.1` stage 在 Draft 创建后暴露 GitHub API 语义差异：认证的
+`releases/tags/{tag}` 对 Draft 返回 404，而认证的 release list 会包含 Draft。
+CLI bootstrap 和 upgrade downloader 已改为先按 tag 查询、404 时安全分页查找精确
+Draft tag，并增加认证 token 不出现在 URL、只进入 Authorization header 的回归测试。
+因此没有强移失败标签，而是以新 tag `v0.3.0-rc.2` 重跑并通过完整 stage。
 
 2026-07-27 本地最终门禁：
 
@@ -363,8 +390,9 @@ npm run perf:m2
 
 ## M2 退出前仍需补齐
 
-1. 创建新 RC，证明真实 draft Release smoke 在 npm publish 前成功；
-2. 用真实上一 Release 和最终 draft Release 完成安装 → upgrade → Hook 字节不变 →
+已完成：创建 `v0.3.0-rc.2`，真实 draft Release smoke 在 npm publish 前成功。
+
+1. 用真实上一 Release 和最终 draft Release 完成安装 → upgrade → Hook 字节不变 →
    fixture 发送 → rollback → uninstall，并保存 Release/CI 链接；
-3. 补齐 macOS、Windows+WSL、Linux、SSH 和 container 的端到端记录；
-4. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。
+2. 补齐 macOS、Windows+WSL、Linux、SSH 和 container 的端到端记录；
+3. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。
