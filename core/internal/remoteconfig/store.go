@@ -140,7 +140,7 @@ func save(path string, value any) error {
 		_ = os.Remove(temporaryPath)
 		return err
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := publishSidecar(temporaryPath, path); err != nil {
 		_ = os.Remove(temporaryPath)
 		return err
 	}

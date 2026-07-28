@@ -399,6 +399,9 @@ func (adapter *ClaudeAdapter) Diagnose() AdapterResult {
 		result.Message = "AgentBell Claude Code hooks have run since the last settings change"
 	} else {
 		result.Message = "Claude Code hooks are installed but not yet observed after the last settings change; complete a new CLI or Desktop local turn"
+		if receiptErr == nil {
+			result.Message += adapter.claudeRuntimeSuppressionNote(receipt)
+		}
 	}
 	if receiptErr == nil {
 		result.Message += claudeReceiptCompatibilityNote(receipt)
@@ -650,6 +653,26 @@ func claudeReceiptCompatibilityNote(receipt claudeReceipt) string {
 			strings.Join(receipt.Events, ", ")
 	}
 	return "; Claude Code version is unknown, so a conservative compatibility shell command and baseline Stop/Notification events are in use"
+}
+
+func (adapter *ClaudeAdapter) claudeRuntimeSuppressionNote(
+	receipt claudeReceipt,
+) string {
+	if receipt.ClaudeVersion != "2.0.19" {
+		return ""
+	}
+	root, exists, err := readJSONObject(adapter.settingsPath())
+	if err != nil {
+		return ""
+	}
+	if !exists {
+		return ""
+	}
+	permissions, ok := root["permissions"].(map[string]any)
+	if !ok || permissions["defaultMode"] != "auto" {
+		return ""
+	}
+	return "; Claude Code 2.0.19 suppresses settings Hooks while permissions.defaultMode=auto; choose a supported Claude permission mode or upgrade Claude Code before runtime verification"
 }
 
 func (adapter *ClaudeAdapter) backup(source string) (string, error) {

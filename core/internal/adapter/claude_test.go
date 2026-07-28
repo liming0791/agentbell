@@ -604,6 +604,35 @@ func TestClaudeUnknownVersionUsesDiagnosedCompatibilityMode(t *testing.T) {
 	}
 }
 
+func TestClaudeDiagnoseReportsVersionSpecificAutoPermissionSuppression(t *testing.T) {
+	adapterValue := newTestClaudeAdapter(t)
+	adapterValue.VersionOutput = func(string) (string, error) {
+		return "2.0.19", nil
+	}
+	if err := os.MkdirAll(adapterValue.ClaudeHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONObject(adapterValue.settingsPath(), map[string]any{
+		"permissions": map[string]any{
+			"defaultMode": "auto",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapterValue.Install(false); err != nil {
+		t.Fatal(err)
+	}
+
+	result := adapterValue.Diagnose()
+	message := strings.ToLower(result.Message)
+	if !result.Installed || result.RuntimeVerified ||
+		!strings.Contains(message, "2.0.19") ||
+		!strings.Contains(message, "defaultmode") ||
+		!strings.Contains(message, "suppresses") {
+		t.Fatalf("auto permission suppression was not diagnosed: %#v", result)
+	}
+}
+
 func TestClaudeDefaultPlatformIsHostPlatform(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))

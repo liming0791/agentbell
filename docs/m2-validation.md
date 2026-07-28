@@ -284,12 +284,20 @@ user 模式、多通道策略或后台 service 投递。
 - QoderWork CN 0.9.12 与 TRAE CN 3.3.79 的自有 Hook 从工作树开发 Core 迁移到受管
   版本 Core，迁移前均生成带哈希的配置备份；两个真实 GUI 新任务都产生了配置变更后的
   `task.completed` proof，`runtimeVerified` 为 true；
-- Codex 0.146 的 AgentBell Stop Hook 已被 `/hooks` 发现，但当前位置显示 modified /
-  review required；未绕过产品信任边界，因此本轮没有新的 Codex proof；
+- Codex 0.146 的 `/hooks` 逐项复核确认 AgentBell Stop Hook 精确指向 stable bridge；
+  只信任该项后新建全新 CLI 任务，Stop 正常完成并写入 generation 2、Core
+  0.3.0-rc.1 的 `task.completed` proof，`adapter diagnose codex` 已返回
+  `runtimeVerified=true`；全程未选择 trust all，也未使用 Hook 信任绕过参数；
 - 本机 Claude Code 2.0.19 会在 settings 中出现未知 `StopFailure` 时把整个 Hook 对象
   视为零匹配。候选实现现按官方版本阈值协商事件集与命令形态，并通过自动迁移、卸载、
-  audit、race 和 Windows 交叉编译测试；真实用户 settings 迁移被本机审批系统拦下，
-  因而本轮也没有新的 Claude proof。
+  audit、race 和 Windows 交叉编译测试。真实用户 settings 已在备份后迁移为
+  Stop/Notification 兼容集合；最小差分实测进一步确认 2.0.19 在
+  `permissions.defaultMode=auto` 时仍把全部 settings Hook 视为零匹配，而移除该字段
+  的隔离对照立即恢复 Stop matcher。AgentBell 不改变用户审批策略；随后另一个真实
+  Claude Code 任务仍通过 stable bridge 写入了 generation 2、Core 0.3.0-rc.1 的
+  `task.completed` proof，`adapter diagnose claude-code` 已返回
+  `runtimeVerified=true`。因此兼容 Hook 的真实运行态已验证，但 2.0.19 的特定自动权限
+  CLI 路径仍由 `diagnose` 在缺少 proof 时明确提示，不能把该宿主限制静默处理。
 
 QoderWork/TRAE 继续使用各自独立的版本化 Core Hook，而 Codex/Claude/Kimi 使用 stable
 bridge；不能把前三项的局部 macOS 证据解释为五个产品、三平台或 IDE Surface 矩阵完成。
@@ -347,5 +355,4 @@ npm run perf:m2
 2. 用真实上一 Release 和最终 draft Release 完成安装 → upgrade → Hook 字节不变 →
    fixture 发送 → rollback → uninstall，并保存 Release/CI 链接；
 3. 补齐 macOS、Windows+WSL、Linux、SSH 和 container 的端到端记录；
-4. 真实 Codex/Claude/Kimi 任务生成配置变更后的 runtime proof；
-5. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。
+4. 将本表中的“待验”替换为证据链接后，才可把实施计划状态改为完成。

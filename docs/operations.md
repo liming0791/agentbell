@@ -307,6 +307,12 @@ receipt 会记录安装时的版本、事件集、命令形态和底层参数；
 tab 的本地会话共享用户级 settings 和 Hooks；云会话不读取本机 Hook。settings 通常会
 热重载，若 `/hooks` 没有出现新条目再重启会话。
 
+Claude Code 2.0.19 还有一个独立宿主限制：当用户 settings 设置
+`permissions.defaultMode: "auto"` 时，该版本会把 settings Hook 全部视为零匹配，
+即使当前 CLI 回合显式选择其他 permission mode。`diagnose` 会明确报告这一条件；
+AgentBell 不会删除或改写用户的自动审批策略。需要用户自行选择该版本支持的 permission
+mode，或升级 Claude Code，再完成新回合取得 runtime proof。
+
 Codex 与 Claude Code 的共享用户 Hook 输入目前都没有可靠、公开的 CLI/Desktop
 判别字段，因此两种本地执行面都会以兼容值 `surface: cli` 入队；这不影响通知触发，
 但不能把该字段当作 Desktop 使用统计。待厂商提供稳定判别字段后再细分。

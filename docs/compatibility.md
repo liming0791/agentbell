@@ -47,7 +47,9 @@
 Claude Code 已完成共享 user-settings Go Adapter、三平台 conformance fixture、
 CLI/Desktop 配置复用和版本化 Hook 事件/命令迁移；未知或 `<2.0.45` 版本保守安装
 `Stop`/`Notification`，`2.0.45`、`2.1.78`、`2.1.139` 分别解锁
-`PermissionRequest`、`StopFailure` 和 exec-form `args`。Kimi Code 已完成 Go Adapter
+`PermissionRequest`、`StopFailure` 和 exec-form `args`。2.0.19 在
+`permissions.defaultMode=auto` 时会抑制全部 settings Hook；Adapter 只诊断，不改变
+用户审批策略。Kimi Code 已完成 Go Adapter
 实现与 macOS CLI 实机验收
 （2026-07-25）。OpenCode 已完成全局插件 Go Adapter 实现（`opencode-plugin-events`
 dialect，事件 `session.idle`/`session.error`/`permission.asked`），CLI/TUI/Desktop
