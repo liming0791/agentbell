@@ -893,6 +893,11 @@ test("rollback restarts the stable bridge through the current Core", async (cont
 
   assert.equal(result.activeVersion, "0.2.0-rc.3");
   assert.equal(restartRequest.active.activeVersion, "0.2.0-rc.3");
+  assert.equal(restartRequest.active.serviceVersion, "0.3.0-rc.2");
+  assert.equal(
+    restartRequest.active.serviceChecksum,
+    sha256(Buffer.from("core-0.3.0-rc.2"))
+  );
   assert.match(
     restartRequest.corePath,
     /0\.3\.0-rc\.2[\\/]agentbell$/

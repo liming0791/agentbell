@@ -661,8 +661,10 @@ function validateActiveState(value) {
     "generation",
     "activeVersion",
     "previousVersion",
+    "serviceVersion",
     "target",
     "checksum",
+    "serviceChecksum",
     "bridgeChecksum",
     "transactionId"
   ]);
@@ -680,6 +682,12 @@ function validateActiveState(value) {
       !versionPattern.test(value.activeVersion) ||
       (value.previousVersion !== undefined &&
         !versionPattern.test(value.previousVersion)) ||
+      ((value.serviceVersion === undefined) !==
+        (value.serviceChecksum === undefined)) ||
+      (value.serviceVersion !== undefined &&
+        !versionPattern.test(value.serviceVersion)) ||
+      (value.serviceChecksum !== undefined &&
+        !checksumPattern.test(value.serviceChecksum)) ||
       typeof value.target !== "string" ||
       !checksumPattern.test(value.checksum) ||
       !checksumPattern.test(value.bridgeChecksum) ||
@@ -688,6 +696,14 @@ function validateActiveState(value) {
     throw new Error("Invalid AgentBell active state.");
   }
   return value;
+}
+
+function supportsM2Runtime(version) {
+  const match = /^(\d+)\.(\d+)\.\d+/.exec(version);
+  if (!match) {
+    return false;
+  }
+  return Number(match[1]) > 0 || Number(match[2]) >= 3;
 }
 
 async function loadActive(dataRoot, { optional = false } = {}) {
@@ -1996,6 +2012,14 @@ export async function rollback({
       generation,
       activeVersion: selected,
       previousVersion: current.activeVersion,
+      ...(!supportsM2Runtime(selected)
+        ? {
+            serviceVersion:
+              current.serviceVersion || current.activeVersion,
+            serviceChecksum:
+              current.serviceChecksum || current.checksum
+          }
+        : {}),
       target: target.id,
       checksum: installed.metadata.checksum,
       bridgeChecksum: current.bridgeChecksum,

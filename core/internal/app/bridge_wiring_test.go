@@ -239,6 +239,34 @@ func TestServiceRestartUsesStableBridgeRuntime(t *testing.T) {
 
 func TestBridgeDoctorReportsValidatedActiveRuntime(t *testing.T) {
 	resolved, corePath, bridgePath, state := activeRuntimeFixture(t)
+	serviceBytes := []byte("pinned service AgentBell Core")
+	state.ServiceVersion = "0.3.1"
+	state.ServiceChecksum = installstate.SHA256(serviceBytes)
+	serviceState := state
+	serviceState.ActiveVersion = state.ServiceVersion
+	serviceState.PreviousVersion = ""
+	serviceState.Checksum = state.ServiceChecksum
+	serviceState.ServiceVersion = ""
+	serviceState.ServiceChecksum = ""
+	serviceCorePath, err := installstate.ManagedCorePath(
+		resolved.DataDir,
+		serviceState,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(serviceCorePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(serviceCorePath, serviceBytes, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := installstate.NewStore(installstate.OSFileSystem{}).Save(
+		resolved.DataDir,
+		state,
+	); err != nil {
+		t.Fatal(err)
+	}
 	metadataPath := filepath.Join(
 		filepath.Dir(corePath),
 		"install.json",
@@ -253,6 +281,22 @@ func TestBridgeDoctorReportsValidatedActiveRuntime(t *testing.T) {
 	  "transactionId": "tx-app-wiring"
 	}`
 	if err := os.WriteFile(metadataPath, []byte(metadata), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	serviceMetadata := `{
+	  "schemaVersion": 1,
+	  "version": "0.3.1",
+	  "target": "` + state.Target + `",
+	  "checksum": "` + state.ServiceChecksum + `",
+	  "bridgeChecksum": "` + state.BridgeChecksum + `",
+	  "signatureStatus": "technical-preview",
+	  "transactionId": "tx-app-wiring"
+	}`
+	if err := os.WriteFile(
+		filepath.Join(filepath.Dir(serviceCorePath), "install.json"),
+		[]byte(serviceMetadata),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,8 +319,10 @@ func TestBridgeDoctorReportsValidatedActiveRuntime(t *testing.T) {
 		result.Mode != "active" ||
 		result.DataRoot != resolved.DataDir ||
 		result.CorePath != corePath ||
+		result.ServiceCorePath != serviceCorePath ||
 		result.BridgePath != bridgePath ||
 		result.Version != state.ActiveVersion ||
+		result.ServiceVersion != state.ServiceVersion ||
 		result.Generation != state.Generation ||
 		result.SignatureStatus != "technical-preview" {
 		t.Fatalf("unexpected bridge doctor report: %#v", result)

@@ -366,6 +366,75 @@ func TestServiceV1RunsForegroundAndPropagatesFailure(t *testing.T) {
 	}
 }
 
+func TestServiceV1UsesPinnedM2CoreAfterPreM2Rollback(t *testing.T) {
+	app, runner, activeCorePath, state := bridgeFixture(t)
+	dataRoot, err := installstate.DataRootFromBridgePath(
+		mustExecutablePath(t, app),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceCore := []byte("service-compatible AgentBell Core")
+	serviceVersion := "0.3.0-rc.4"
+	state.ActiveVersion = "0.2.0-rc.3"
+	state.PreviousVersion = serviceVersion
+	state.Checksum = installstate.SHA256([]byte("test AgentBell Core"))
+	state.ServiceVersion = serviceVersion
+	state.ServiceChecksum = installstate.SHA256(serviceCore)
+	activeCorePath, err = installstate.ManagedCorePath(dataRoot, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(activeCorePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		activeCorePath,
+		[]byte("test AgentBell Core"),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	serviceState := state
+	serviceState.ActiveVersion = serviceVersion
+	serviceState.PreviousVersion = ""
+	serviceState.Checksum = state.ServiceChecksum
+	serviceState.ServiceVersion = ""
+	serviceState.ServiceChecksum = ""
+	serviceCorePath, err := installstate.ManagedCorePath(dataRoot, serviceState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(serviceCorePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(serviceCorePath, serviceCore, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Store.Save(dataRoot, state); err != nil {
+		t.Fatal(err)
+	}
+
+	if exitCode := app.Run(
+		context.Background(),
+		[]string{"service-v1"},
+		bytes.NewReader(nil),
+		io.Discard,
+		io.Discard,
+	); exitCode != 0 {
+		t.Fatalf("service exit code = %d", exitCode)
+	}
+	if len(runner.Calls) != 1 ||
+		runner.Calls[0].Executable != serviceCorePath {
+		t.Fatalf(
+			"service used %#v, want %s (active Hook Core %s)",
+			runner.Calls,
+			serviceCorePath,
+			activeCorePath,
+		)
+	}
+}
+
 func TestOnlyVersionedBridgeCommandsAreAccepted(t *testing.T) {
 	app, runner, _, _ := bridgeFixture(t)
 	for _, args := range [][]string{

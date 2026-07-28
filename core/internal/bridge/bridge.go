@@ -126,7 +126,7 @@ func (app *App) runHook(ctx context.Context, args []string, stdin io.Reader) err
 	if err != nil {
 		return err
 	}
-	corePath, state, err := app.activeCore()
+	corePath, state, _, err := app.activeCore()
 	if err != nil {
 		return err
 	}
@@ -169,9 +169,21 @@ func (app *App) runService(
 	stdout io.Writer,
 	stderr io.Writer,
 ) error {
-	corePath, _, err := app.activeCore()
+	corePath, state, dataRoot, err := app.activeCore()
 	if err != nil {
 		return err
+	}
+	if state.ServiceVersion != "" {
+		serviceState := state
+		serviceState.ActiveVersion = state.ServiceVersion
+		serviceState.PreviousVersion = ""
+		serviceState.Checksum = state.ServiceChecksum
+		serviceState.ServiceVersion = ""
+		serviceState.ServiceChecksum = ""
+		corePath, err = app.Store.ResolveManagedCore(dataRoot, serviceState)
+		if err != nil {
+			return fmt.Errorf("resolve service Core: %w", err)
+		}
 	}
 	return app.runner().Run(
 		ctx,
@@ -183,32 +195,37 @@ func (app *App) runService(
 	)
 }
 
-func (app *App) activeCore() (string, installstate.ActiveState, error) {
+func (app *App) activeCore() (
+	string,
+	installstate.ActiveState,
+	string,
+	error,
+) {
 	executablePath := app.ExecutablePath
 	if executablePath == nil {
 		executablePath = os.Executable
 	}
 	executable, err := executablePath()
 	if err != nil {
-		return "", installstate.ActiveState{}, err
+		return "", installstate.ActiveState{}, "", err
 	}
 	dataRoot, err := installstate.DataRootFromBridgePath(executable)
 	if err != nil {
-		return "", installstate.ActiveState{}, err
+		return "", installstate.ActiveState{}, "", err
 	}
 	state, err := app.Store.Load(dataRoot)
 	if err != nil {
-		return "", installstate.ActiveState{}, err
+		return "", installstate.ActiveState{}, "", err
 	}
 	target := app.Target
 	if target == "" {
 		target, err = CurrentTarget(runtime.GOOS, runtime.GOARCH)
 		if err != nil {
-			return "", installstate.ActiveState{}, err
+			return "", installstate.ActiveState{}, "", err
 		}
 	}
 	if state.Target != target {
-		return "", installstate.ActiveState{}, fmt.Errorf(
+		return "", installstate.ActiveState{}, "", fmt.Errorf(
 			"active Core target %s does not match bridge target %s",
 			state.Target,
 			target,
@@ -216,9 +233,9 @@ func (app *App) activeCore() (string, installstate.ActiveState, error) {
 	}
 	corePath, err := app.Store.ResolveManagedCore(dataRoot, state)
 	if err != nil {
-		return "", installstate.ActiveState{}, err
+		return "", installstate.ActiveState{}, "", err
 	}
-	return corePath, state, nil
+	return corePath, state, dataRoot, nil
 }
 
 func (app *App) runner() Runner {

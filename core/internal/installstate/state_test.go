@@ -39,6 +39,16 @@ func TestActiveStateValidate(t *testing.T) {
 		{"numeric prerelease leading zero", func(state *ActiveState) { state.ActiveVersion = "0.3.0-01" }},
 		{"previous version", func(state *ActiveState) { state.PreviousVersion = "bad/version" }},
 		{"same versions", func(state *ActiveState) { state.PreviousVersion = state.ActiveVersion }},
+		{"service version only", func(state *ActiveState) { state.ServiceVersion = "0.3.0" }},
+		{"service checksum only", func(state *ActiveState) { state.ServiceChecksum = strings.Repeat("c", 64) }},
+		{"service version", func(state *ActiveState) {
+			state.ServiceVersion = "../escape"
+			state.ServiceChecksum = strings.Repeat("c", 64)
+		}},
+		{"service checksum", func(state *ActiveState) {
+			state.ServiceVersion = "0.3.0"
+			state.ServiceChecksum = strings.Repeat("C", 64)
+		}},
 		{"target", func(state *ActiveState) { state.Target = "plan9-amd64" }},
 		{"checksum", func(state *ActiveState) { state.Checksum = strings.Repeat("A", 64) }},
 		{"bridge checksum", func(state *ActiveState) { state.BridgeChecksum = "" }},

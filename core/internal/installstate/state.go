@@ -45,8 +45,10 @@ type ActiveState struct {
 	Generation      uint64 `json:"generation"`
 	ActiveVersion   string `json:"activeVersion"`
 	PreviousVersion string `json:"previousVersion,omitempty"`
+	ServiceVersion  string `json:"serviceVersion,omitempty"`
 	Target          string `json:"target"`
 	Checksum        string `json:"checksum"`
+	ServiceChecksum string `json:"serviceChecksum,omitempty"`
 	BridgeChecksum  string `json:"bridgeChecksum"`
 	TransactionID   string `json:"transactionId"`
 }
@@ -67,6 +69,23 @@ func (state ActiveState) Validate() error {
 		}
 		if state.PreviousVersion == state.ActiveVersion {
 			return errors.New("previousVersion must differ from activeVersion")
+		}
+	}
+	if (state.ServiceVersion == "") != (state.ServiceChecksum == "") {
+		return errors.New(
+			"serviceVersion and serviceChecksum must be set together",
+		)
+	}
+	if state.ServiceVersion != "" {
+		if !validVersion(state.ServiceVersion) {
+			return errors.New(
+				"serviceVersion must be a valid AgentBell semantic version",
+			)
+		}
+		if !checksumPattern.MatchString(state.ServiceChecksum) {
+			return errors.New(
+				"serviceChecksum must be a lowercase SHA-256 digest",
+			)
 		}
 	}
 	if !allowedTargets[state.Target] {

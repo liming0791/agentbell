@@ -23,8 +23,10 @@ type bridgeDoctorReport struct {
 	DataRoot        string `json:"dataRoot"`
 	ActiveStatePath string `json:"activeStatePath"`
 	CorePath        string `json:"corePath"`
+	ServiceCorePath string `json:"serviceCorePath,omitempty"`
 	BridgePath      string `json:"bridgePath,omitempty"`
 	Version         string `json:"version,omitempty"`
+	ServiceVersion  string `json:"serviceVersion,omitempty"`
 	Generation      uint64 `json:"generation,omitempty"`
 	Target          string `json:"target,omitempty"`
 	SignatureStatus string `json:"signatureStatus"`
@@ -77,6 +79,14 @@ func runBridge(args []string, stdout io.Writer) error {
 	)
 	if report.BridgePath != "" {
 		fmt.Fprintf(stdout, "Bridge: %s\n", report.BridgePath)
+	}
+	if report.ServiceCorePath != "" {
+		fmt.Fprintf(
+			stdout,
+			"Service Core: %s (%s)\n",
+			report.ServiceCorePath,
+			report.ServiceVersion,
+		)
 	}
 	return nil
 }
@@ -140,14 +150,52 @@ func inspectBridgeRuntime(resolved paths.Paths) (bridgeDoctorReport, error) {
 			"stable AgentBell bridge checksum does not match active state",
 		)
 	}
+	serviceCorePath := ""
+	if active.ServiceVersion != "" {
+		serviceState := active
+		serviceState.ActiveVersion = active.ServiceVersion
+		serviceState.PreviousVersion = ""
+		serviceState.Checksum = active.ServiceChecksum
+		serviceState.ServiceVersion = ""
+		serviceState.ServiceChecksum = ""
+		serviceCorePath, err = store.ResolveManagedCore(
+			resolved.DataDir,
+			serviceState,
+		)
+		if err != nil {
+			return bridgeDoctorReport{}, fmt.Errorf(
+				"resolve pinned service Core: %w",
+				err,
+			)
+		}
+		serviceMetadata, metadataErr := loadInstallMetadata(filepath.Join(
+			filepath.Dir(serviceCorePath),
+			"install.json",
+		))
+		if metadataErr != nil {
+			return bridgeDoctorReport{}, fmt.Errorf(
+				"load pinned service install metadata: %w",
+				metadataErr,
+			)
+		}
+		if serviceMetadata.Version != active.ServiceVersion ||
+			serviceMetadata.Target != active.Target ||
+			serviceMetadata.Checksum != active.ServiceChecksum {
+			return bridgeDoctorReport{}, errors.New(
+				"pinned service install metadata does not match active state",
+			)
+		}
+	}
 	return bridgeDoctorReport{
 		Healthy:         true,
 		Mode:            "active",
 		DataRoot:        resolved.DataDir,
 		ActiveStatePath: activePath,
 		CorePath:        selected.CoreExecutable,
+		ServiceCorePath: serviceCorePath,
 		BridgePath:      selected.BridgeExecutable,
 		Version:         active.ActiveVersion,
+		ServiceVersion:  active.ServiceVersion,
 		Generation:      active.Generation,
 		Target:          active.Target,
 		SignatureStatus: metadata.SignatureStatus,
