@@ -71,7 +71,7 @@ jobs:
           package-manager-cache: false
 
       - name: Use Go 1.26.5
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: "1.26.5"
           cache-dependency-path: core/go.mod
