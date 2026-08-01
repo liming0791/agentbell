@@ -4,7 +4,17 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "**/*.md"
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - converted_to_draft
+    paths-ignore:
+      - "**/*.md"
   workflow_dispatch:
 
 permissions:
@@ -42,8 +52,16 @@ jobs:
       - name: Run repository checks
         run: npm run ci
 
+      - name: Run Linux migration and durable emit gates
+        run: |
+          npm run test:migrations
+          npm run perf:emit
+
   compatibility:
     name: ${{ matrix.os }} / Node.js ${{ matrix.node }}
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Merge pull request #'))
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -52,14 +70,16 @@ jobs:
         include:
           - os: ubuntu-latest
             node: 20
+            platform: false
           - os: ubuntu-latest
             node: 22
-          - os: ubuntu-latest
-            node: 24
+            platform: false
           - os: windows-latest
             node: 22
+            platform: true
           - os: macos-latest
             node: 22
+            platform: true
 
     steps:
       - name: Check out repository
@@ -72,6 +92,7 @@ jobs:
           cache: npm
 
       - name: Use Go 1.26.5
+        if: matrix.platform == true
         uses: actions/setup-go@v6
         with:
           go-version: "1.26.5"
@@ -84,15 +105,23 @@ jobs:
         run: npm test
 
       - name: Run Go tests
+        if: matrix.platform == true
         working-directory: core
         run: go test ./...
 
-      - name: Verify durable emit p95
-        if: matrix.node == 22
+      - name: Run fixed historical migration fixtures
+        if: matrix.platform == true
+        run: npm run test:migrations
+
+      - name: Verify durable emit p95 on desktop platforms
+        if: matrix.platform == true
         run: npm run perf:emit
 
   race:
     name: Go race detector
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Merge pull request #'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -110,39 +139,11 @@ jobs:
         working-directory: core
         run: go test -race ./...
 
-  migration:
-    name: Migration fixtures / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-          - os: windows-latest
-          - os: macos-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Use Node.js 24
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Use Go 1.26.5
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.26.5"
-          cache-dependency-path: core/go.mod
-
-      - name: Run fixed historical migration fixtures
-        run: npm run test:migrations
-
   m2-stress:
     name: M2 durable relay stress gate
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Merge pull request #'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -166,12 +167,15 @@ jobs:
         run: npm ci
 
       - name: Verify M2 durable retry and recovery invariants
-        run: npm run perf:m2
+        run: node scripts/benchmark-m2.mjs
         env:
           AGENTBELL_M2_STRESS_ITEMS: "96"
 
   m2-https:
     name: M2 TLS and HTTPS relay smoke
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Merge pull request #'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -196,6 +200,9 @@ jobs:
 
   cross-build:
     name: Six-target Core and bridge build
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Merge pull request #'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

@@ -8,6 +8,7 @@
 
 ```bash
 npm ci && npm run ci     # lint + 结构检查 + Node/Go 覆盖率门禁 + pack 预检
+npm run check:docs       # 仓库结构 + Markdown 本地路径检查（无需 npm ci）
 npm run go:check         # gofmt/vet/test + 覆盖率门禁
 npm run perf:emit        # emit 性能门禁
 npm run perf:m2          # bridge 性能 + relay 持久重试语义门禁
@@ -60,6 +61,12 @@ Core 本地构建：`cd core && go build ./cmd/agentbell`。
 - Release 分两段：Tag push 或手动 `stage` 只创建并复验 Draft；只有从同一 Tag 手动
   `finalize`、重新下载验证全部 Draft 资产且 npm Trusted Publishing 已启用后，才允许
   发布两个 npm 包并把 GitHub Release 转为公开。失败不得重写或重新 draft 已公开 Release。
+  GitHub 因账单等平台原因拒绝启动 job 时，人工兜底只能使用同一 Tag 已成功 build job
+  的精确资产，逐项复现 Draft、lifecycle、npm 字节一致性和最终安装门禁，并在验收台账
+  记录失败 run 与替代证据；不得把被平台拒绝的 Actions run 描述成成功。
+- CI 分层不得削弱 Ready PR 和直接 `main` push 的完整门禁：Draft PR 只跑质量 job，
+  Markdown-only 走轻量 docs workflow，标准 GitHub merge commit 只重跑质量 job；
+  Release stage/finalize 不受此节流规则影响。
 - npm 正式包固定为 `@liming0791/agentbell-cli` 和
   `@liming0791/agentbell-hook-runtime`；`@agentbell` 属于无关第三方，不得使用。RC5
   起 npm tgz 带 `liming0791-agentbell-` 前缀；旧 Release 的无前缀 CLI tgz 仅用于

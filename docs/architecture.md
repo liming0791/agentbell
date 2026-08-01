@@ -66,17 +66,17 @@ Node.js 保留为 npm 安装入口和开发期脚手架，例如
 版本、目标、Core/stable bridge checksum 和 activation generation；Codex、Claude Code、
 Kimi Code Hook 以及登录服务固定调用 bridge，由 bridge 校验 active state 后分发到当前
 Core。这样后续
-升级/回滚不需要重写 Hook 或服务定义。当前工作树已接通 active-state App wiring、
+升级/回滚不需要重写 Hook 或服务定义。`v0.3.0-rc.5` 已接通 active-state App wiring、
 generation-aware runtime proof、stable Service 定义和 `service restart`；跨旧 Release
-升级/Hook 字节不变/回滚/卸载的自动 smoke 已接入发布流水线；最终
-`v0.3.0-rc.4` Draft 已完成 Linux 自动 smoke 和 macOS 真机生命周期。
+升级/Hook 字节不变/回滚/卸载 smoke 已接入发布流水线，并已完成 Linux 隔离生命周期
+和 macOS 真机生命周期。
 首次从 M1 迁移时，bootstrap 会识别并校验旧式无 `schemaVersion` 的 `install.json`；
 只有一个有效旧版本时自动纳入 `previous`，存在多个候选时要求显式 `--from`，不能猜测。
 首次切换在 active state 落盘后由新 Core 执行 `service install`，把原先直接调用
 版本化 Core 的平台服务定义改为 stable bridge；若切换失败且旧安装没有 active state，
 补偿会在恢复旧状态后由旧 Core 重装 legacy 服务定义。已有 M2 active state 的升级和
 显式 rollback 继续只重启 stable bridge。macOS 真实 LaunchAgent 已完成 M1 形态迁移，
-以及真实上一 Release → 最终 `v0.3.0-rc.4` Draft → 旧版 rollback → 统一卸载；
+以及真实上一 Release → `v0.3.0-rc.4` Draft → 旧版 rollback → 统一卸载；
 升级和回滚后的后台飞书投递均通过。macOS 断网恢复与 Windows/Linux 实机仍待验。
 rollback 保留当前协议版本的 stable bridge，并从 active state 校验其独立 checksum；
 若目标是不能解析当前 M2 配置的 pre-M2 Core，Hook 仍分发到回滚目标，但 `service-v1`

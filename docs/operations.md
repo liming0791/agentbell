@@ -1,31 +1,33 @@
 # AgentBell 安装与运维
 
-最新已发布版本是 `v0.2.0-rc.3` Technical Preview，包含原生 Core、持久队列、Codex
-Adapter 和 npm bootstrap。当前 M1/M1.5 工作树、本地 dev 构建另已实现
+最新已发布版本是 `v0.3.0-rc.5` Technical Preview，包含原生 Core、持久队列、
 `agentbell setup`、`agentbell test`、Codex / Claude Code / Kimi Code / OpenCode /
-Qoder / QoderWork / TRAE Adapter，以及 macOS、Windows、Linux 登录自启动；这些能力
-尚未发布，安装 rc.3 不会自动获得它们。GUI 安装器和正式代码签名仍属于后续发布阶段。
+Qoder / QoderWork / TRAE Adapter、三平台登录自启动及当前 M2 命令面。所有 Adapter
+仍为 Pilot；GUI 安装器、正式代码签名和 M2 完整实机矩阵仍属于后续发布阶段。
 
 ## 安装 Core
 
 发布包可从私有 GitHub Release 下载。使用 npm bootstrap 时，私有仓库需要只读 GitHub
 token；token 只进入 HTTP `Authorization` header，不写入 URL、安装元数据或仓库。
 
-在 npm Trusted Publisher 启用前，先从 GitHub Release 取得已验证的 tgz：
+两个 npm 包已经公开并配置 Trusted Publisher。仓库当前仍为私有仓库，因此 bootstrap
+下载 Core 前需要给当前进程提供只读 GitHub token：
 
 ```powershell
-gh release download v0.2.0-rc.3 --repo liming0791/agentbell --pattern "agentbell-cli-*.tgz"
 $env:AGENTBELL_GITHUB_TOKEN = gh auth token
-npm exec --package .\agentbell-cli-0.2.0-rc.3.tgz -- agentbell install-core --version 0.2.0-rc.3
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.5
 Remove-Item Env:AGENTBELL_GITHUB_TOKEN
 ```
 
-npm registry 发布启用后，也可以直接运行
-`npx @agentbell/cli@0.2.0-rc.3 install-core --version 0.2.0-rc.3`。
+macOS/Linux：
 
-在 macOS/Linux 中把第一行改成
-`export AGENTBELL_GITHUB_TOKEN="$(gh auth token)"`，完成后执行
-`unset AGENTBELL_GITHUB_TOKEN`。bootstrap 先下载 `checksums.txt`，校验 SHA-256 后才把
+```bash
+export AGENTBELL_GITHUB_TOKEN="$(gh auth token)"
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.5
+unset AGENTBELL_GITHUB_TOKEN
+```
+
+bootstrap 先下载 `checksums.txt`，校验 SHA-256 后才把
 Core 移入版本目录；校验失败的文件不会执行。
 私有仓库使用 GitHub Releases API 定位 asset，并用同一个只读 token 下载；公开仓库和
 `AGENTBELL_RELEASE_BASE_URL` 指向的测试镜像仍使用标准 Release 下载路径。
@@ -130,9 +132,9 @@ agentbell test --channel team --json
 `--channel <id>` 指定目标通道，缺省使用 `defaultChannel`。成功输出只包含 AgentBell
 channel id、状态和发送时间，不回显真实飞书 chat id。
 
-## M2 工作树命令（开发中，尚未发布）
+## M2 Technical Preview 命令
 
-当前工作树可以在隔离数据目录中预览本机设置、一次性绑定和 stable bridge：
+RC5 可以在隔离数据目录中使用本机设置、一次性绑定和 stable bridge：
 
 ```text
 agentbell settings show --effective --json
@@ -191,7 +193,7 @@ npm bootstrap 另有 `upgrade --to <version>`、`rollback` 和 `versions` 的事
 smoke 和失败补偿；App 与三个旧 Adapter 已使用 active generation。sidecar 回滚
 preflight、`plugin verify` 和五个插件的 Release keyless 签名/下载后复验已经接入自动
 测试与工作流。跨旧 Release 的自动 lifecycle smoke 已接入 workflow；macOS 真实
-LaunchAgent 的备份迁移、最终 `v0.3.0-rc.4` Draft 升级、旧版回滚、后台飞书投递和
+LaunchAgent 的备份迁移、`v0.3.0-rc.4` Draft 升级、旧版回滚、后台飞书投递和
 统一卸载已通过；macOS 断网恢复与 Windows/Linux 服务迁移仍未完成。
 首次从 M1 升级时，bootstrap 会校验旧式 `install.json` 并把唯一的受管旧版本纳入
 `previous`；若 `bin/` 中有多个有效旧版本，必须使用

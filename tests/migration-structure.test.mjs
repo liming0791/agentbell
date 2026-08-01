@@ -86,7 +86,7 @@ test("migration fixture inventory and privacy contract are fixed", async () => {
   }
 });
 
-test("CI owns a dedicated cross-platform migration matrix", async () => {
+test("CI keeps migration fixtures on Linux, Windows and macOS without extra jobs", async () => {
   const packageDocument = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8")
   );
@@ -107,16 +107,21 @@ test("CI owns a dedicated cross-platform migration matrix", async () => {
     path.join(root, ".github", "workflows", "ci.yml"),
     "utf8"
   );
-  const migrationJob = workflow.match(
-    /\n {2}migration:\n[\s\S]*?(?=\n {2}[a-z0-9-]+:\n|$)/
+  const qualityJob = workflow.match(
+    /\n {2}quality:\n[\s\S]*?(?=\n {2}[a-z0-9-]+:\n|$)/
   );
-  assert.ok(migrationJob, "migration job is missing");
-  assert.match(migrationJob[0], /npm run test:migrations/);
-  for (const operatingSystem of [
-    "ubuntu-latest",
-    "windows-latest",
-    "macos-latest"
-  ]) {
-    assert.match(migrationJob[0], new RegExp(`- os: ${operatingSystem}`));
+  const compatibilityJob = workflow.match(
+    /\n {2}compatibility:\n[\s\S]*?(?=\n {2}[a-z0-9-]+:\n|$)/
+  );
+  assert.ok(qualityJob, "quality job is missing");
+  assert.ok(compatibilityJob, "compatibility job is missing");
+  assert.match(qualityJob[0], /npm run test:migrations/);
+  assert.match(compatibilityJob[0], /npm run test:migrations/);
+  for (const operatingSystem of ["windows-latest", "macos-latest"]) {
+    assert.match(
+      compatibilityJob[0],
+      new RegExp(`- os: ${operatingSystem}`)
+    );
   }
+  assert.doesNotMatch(workflow, /\n {2}migration:\n/u);
 });

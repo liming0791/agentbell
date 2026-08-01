@@ -40,7 +40,7 @@ M2 不改变 AgentBell 的产品边界：优先使用公开 Hook，不注入 Age
   投递账本回滚 preflight 已完成；macOS 真实 LaunchAgent 已完成备份迁移和后台飞书
   投递，Codex 0.146、Claude Code 2.0.19 和 Kimi Code 也已分别通过新任务/会话取得当前
   generation 的 `task.completed` runtime proof。真实 macOS 已用上一公开 Release 和
-  最终 `v0.3.0-rc.4` Draft 完成安装、升级、Hook 字节不变、后台发送、pre-M2 回滚和
+  `v0.3.0-rc.4` Draft 完成安装、升级、Hook 字节不变、后台发送、pre-M2 回滚和
   统一卸载；pre-M2 回滚时由 checksum 校验的当前 M2 service Core 保持后台兼容。
   Desktop/IDE Surface、macOS 断网恢复及 Windows/Linux 实机升级/回滚尚未完成，因此
   仍不能把局部实机结果解释为已发布的升级产品流程。
@@ -48,7 +48,7 @@ M2 不改变 AgentBell 的产品边界：优先使用公开 Hook，不注入 Age
   manifest/file-set/兼容范围/身份策略校验域已进入 Core。外部 Hook 只报告不删除；
   基于官方 `sigstore-go` 的 exact-artifact、Fulcio/Rekor 与固定 OIDC/repository/workflow
   验证器、`plugin verify` 命令、五个确定性插件包及 Release keyless 签名和下载后复验
-  已完成自动测试与工作流接线；真实标签 Release 的产物证据仍待生成。
+  已完成自动测试与工作流接线；`v0.3.0-rc.5` 已生成并复验真实标签 Release 产物。
 - RelayEnvelope v1、跨 origin delivery key、Ed25519 exact-body 签名、peer scope、
   nonce store、durable receipt/outbox、queue ingress、HTTPS handler、严格有界 stdio
   frame/ACK 和 outbox forwarder 已完成自动测试；`remote.json`/`relay.json` 严格
@@ -66,6 +66,11 @@ M2 不改变 AgentBell 的产品边界：优先使用公开 Hook，不注入 Age
 - Release workflow 已拆为 `stage`/`finalize` 两次独立执行：Tag push 只留下验证后的
   Draft；维护者必须从同一 Tag 手动 finalize，重新下载复验 Draft 资产并完成 npm
   Trusted Publishing 后，才会把 GitHub Release 转为公开。
+- `v0.3.0-rc.5` 已作为 Technical Preview 发布，两个 npm 包已迁移到维护者拥有的
+  `@liming0791` scope 并配置 Trusted Publisher。此次 GitHub 因账单状态拒绝启动
+  stage/lifecycle/finalize job，维护者使用同一 Tag 成功 build job 的精确资产逐项复现
+  Draft、Linux lifecycle、npm 字节一致性和最终 macOS 安装门禁；该发布证明 M2-605
+  的产物链可用，不关闭 M2-604 实机矩阵。
 
 ## 一、产品结果与完成定义
 

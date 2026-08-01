@@ -4,10 +4,10 @@
 
 | 项目 | 结论 |
 | --- | --- |
-| 记录日期 | 2026-07-28 |
+| 记录日期 | 2026-07-30 |
 | 本地实现 | P0～P6 自动化与本地门禁已实现 |
-| 发布状态 | 未发布，仍为 Technical Preview / Pilot |
-| M2 退出结论 | **未通过**：真实 draft RC 已通过；最终发布、三平台完整矩阵和独立跨主机实机证据尚未完成 |
+| 发布状态 | `v0.3.0-rc.5` 已发布，仍为 Technical Preview / Pilot |
+| M2 退出结论 | **未通过**：RC5 发布完成；三平台完整矩阵和独立跨主机实机证据尚未完成 |
 
 本台账只记录可复现证据，不把 mock、交叉编译或自动 fixture 描述成实机通过。Adapter
 等级继续由 `docs/adapter-contract.md` 的产品实机矩阵决定。
@@ -16,7 +16,7 @@
 
 | 任务 | 当前证据 | 状态 |
 | --- | --- | --- |
-| M2-001～004 协议与迁移骨架 | `docs/adr/0003-m2-compatible-state-and-relay.md`、`core/testdata/migrations/`、严格 sidecar/queue tests、三平台 migration matrix | 本地与 Actions 通过 |
+| M2-001～004 协议与迁移骨架 | `docs/adr/0003-m2-compatible-state-and-relay.md`、`core/testdata/migrations/`、严格 sidecar/queue tests、三平台 migration fixture | 本地与 Actions 通过 |
 | M2-101～104 设置与策略 | `core/internal/settings/`、`policy/`、`service/m2_test.go`、delivery ledger tests | 已实现 |
 | M2-201～204 一次性绑定 | `core/internal/binding/`、`app/bind_test.go`、setup binding tests | 自动测试已实现；现有 bot 通道真实发送通过，一次性绑定仍待验 |
 | M2-301～305 bridge/升级回滚 | `installstate/`、`bridge/`、`adapter/stable_bridge_test.go`、`tests/upgrade.test.mjs`、`scripts/release-lifecycle-smoke.mjs` | 真实旧 Release → `v0.3.0-rc.4` Draft 生命周期与 macOS LaunchAgent 迁移/回滚/卸载通过 |
@@ -24,11 +24,34 @@
 | M2-501～506 Relay/Remote | `relay/`、`remote/`、`remoteconfig/`、`secretstore/`、`app/remote*_test.go`、`scripts/smoke-https-relay.mjs` | 自动测试、macOS Host→Linux container stdio 与隔离 Linux TLS/HTTPS E2E 通过；独立跨主机到飞书待验 |
 | M2-601 doctor | `doctorSchemaVersion=1`、顶层 doctor golden、bridge doctor、connector runtime proof tests | 本地通过；输出脱敏 |
 | M2-602 性能/压力 | stable bridge Hook p95、Relay/32 路 fan-out/queue benchmark、96 durable item stress gate | 本地通过 |
-| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 本地通过；Actions run 30352561499 在 RC4 候选 `aa3ace2` 上 13/13 job 全绿 |
+| M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 旧 13-job 基线由 Actions run 30352561499 证明；2026-07-30 分层 workflow 已完成本地验证，首次远程 run 待提交后补证 |
 | M2-604 实机矩阵 | 下表 | 未通过 |
-| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | RC4 Draft/真机 smoke 通过；finalize 安全发现 npm scope 冲突，RC5 已迁移到 `@liming0791`，待新 Draft/finalize |
+| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | RC5 已发布：27 个 Release 资产、两个 npm 包、Trusted Publisher 和最终安装 smoke 通过；GitHub 账单拒绝启动的 job 使用下节记录的精确资产人工兜底 |
 
-当前 Release 候选还增加了两段式人工发布闸门和四个不可逆发布前门禁：Tag push 或手动
+## 2026-07-30 CI runner 使用优化
+
+现行工作树把 Draft、Ready、标准 GitHub merge commit 和 Markdown-only 改动分层；
+完整矩阵从 13 个 job 收敛到 9 个。Ubuntu Node.js 24 由质量 job 覆盖，三平台
+migration fixture 合并进现有质量/兼容 job，M2 stress 不再重复 `perf:emit`，六目标
+Core/bridge 在单个 Ubuntu runner 内默认两路并行。`.github/workflows/release.yml`
+未修改，stage/finalize 的发布门禁不受节流。
+
+本地证据：
+
+- `npm run ci` exit `0`：104 项 Node 测试通过，Node 行覆盖率 76.23%，Go 总覆盖率
+  79.6%，规定的数据面包覆盖率门禁与两个 npm pack 预检通过；
+- `npm run test:migrations` 在本机通过，工作流回归测试确认该入口仍接入 Linux
+  quality 及 Windows/macOS compatibility job；emit p95 `5.59ms` 和 96-item durable
+  relay stress gate 通过；
+- 六目标 Core + bridge 共 12 个二进制构建通过；相同 version/commit/buildTime 下，
+  默认两路并行与强制单路构建的文件集合和字节完全一致；
+- CI/docs/release 三个 workflow 通过 YAML 解析，19 份 Markdown 的本地路径检查通过。
+
+这些证据证明工作树实现与产物不变量，不等于新 workflow 已在 GitHub-hosted
+Windows/macOS/Linux runner 上通过。首次 Ready PR 的完整远程 run 成功后，应把链接
+补到本节；在此之前不得把旧 13/13 run 描述成新分层 workflow 的成功证据。
+
+当前 Release 流程增加了两段式人工发布闸门和四个不可逆发布前门禁：Tag push 或手动
 `stage` 只生成并复验 Draft，必须从同一 Tag 手动 `finalize` 才能进入 npm/公开发布；
 上一 Release lifecycle 必须实际执行
 产品卸载与 bootstrap Core 清理并验证默认保留项；两个最终 npm tgz 必须进入
@@ -37,8 +60,55 @@ smoke 这两个 tgz；已公开的同 tag Release 不允许 `--clobber` 或在�
 npm registry 不提供两个包的跨包原子事务，首包成功、次包失败时仍需以同一版本重跑
 补齐，不能把该
 补偿模型描述成原子发布；重跑只在已发布版本的 registry `dist.integrity` 与最终 tgz
-完全一致时跳过。`stage` 门禁已由下述真实 RC 证明；`finalize`、npm Trusted
-Publishing 和公开 Release 仍未执行。
+完全一致时跳过。RC5 已完成 npm 首发、Trusted Publisher 配置和公开 prerelease；
+标准 workflow 因 GitHub 账单状态被拒绝启动的部分由下节人工等价门禁补齐。
+
+## `v0.3.0-rc.5` 发布与外部平台故障兜底
+
+2026-07-28，PR #5 合并 commit
+`98ce5a8033cec504352e174ba5ea1059beaf56ad` 后创建不可变 Tag
+`v0.3.0-rc.5`。最终
+[GitHub prerelease](https://github.com/liming0791/agentbell/releases/tag/v0.3.0-rc.5)
+包含 27 个资产；npm 已公开：
+
+- `@liming0791/agentbell-cli@0.3.0-rc.5`；
+- `@liming0791/agentbell-hook-runtime@0.3.0-rc.5`。
+
+[PR CI 30361271121](https://github.com/liming0791/agentbell/actions/runs/30361271121)
+13/13 job 全绿。Tag 的
+[Release run 30361896587](https://github.com/liming0791/agentbell/actions/runs/30361896587)
+中 build job 完成全量 CI、六目标 Core/bridge、Linux TLS/HTTPS smoke、五个插件
+keyless 签名、lifecycle/npm bootstrap smoke 和 artifact 上传；Stage Draft job 在启动前
+被 GitHub 以账号账单状态拒绝。后续
+[lifecycle run 30365393064](https://github.com/liming0791/agentbell/actions/runs/30365393064)
+与
+[finalize run 30371902184](https://github.com/liming0791/agentbell/actions/runs/30371902184)
+也在启动前被同一外部条件拒绝，不能记作测试失败或成功。
+
+人工兜底严格使用同一成功 build job 的精确 artifact：12 个确定性重建的 Core/bridge
+SHA-256 与 CI 匹配，两个 npm tgz、`checksums.txt` 和 manifest 匹配，27/27 GitHub
+asset digest 匹配，五个插件的 OIDC issuer/repository/workflow identity 通过。随后在
+一次性 Linux ARM64 Node 24 容器中用真实 `v0.2.0-rc.3` 和最终 RC5 资产执行：
+
+```text
+install -> upgrade generation 2
+-> 三个稳定 Hook 字节不变
+-> fixture + bridge doctor
+-> rollback generation 3
+-> fixture + bridge doctor
+-> actual uninstall
+```
+
+实际卸载移除受管 runtime、stable bridge、active state 和五个 Linux Adapter Hook，
+两个非 Linux Adapter 明确 skipped；配置和状态按默认策略保留。两个 npm registry
+integrity 与 Draft tgz 的 SHA-512 完全一致，并已为
+`liming0791/agentbell`、`release.yml`、`npm-publish` 配置 GitHub OIDC Trusted
+Publisher。最后从已发布 npm CLI 在隔离 macOS 数据根安装 Draft 的 darwin-arm64 Core，
+版本、commit、build time、SHA-256 与 bridge doctor 均通过，才公开 GitHub prerelease。
+
+仓库仍为 private。npm 包本身公开，但 bootstrap 下载 GitHub Core asset 时，外部用户
+仍需 `AGENTBELL_GITHUB_TOKEN` 或 `GH_TOKEN` 具备仓库读取权限；这属于当前分发限制，
+不应被描述成公开匿名安装。
 
 ## RC4 finalize 的 npm scope 阻断与 RC5 迁移
 
@@ -501,7 +571,8 @@ npm run perf:m2
 
 已完成：
 
-- 创建 `v0.3.0-rc.4`，真实 Draft Release smoke 在 npm publish 前成功；
+- 创建并发布 `v0.3.0-rc.5`；真实 Draft 资产复验、npm 字节一致性、Trusted Publisher
+  和最终安装 smoke 在公开 GitHub prerelease 前成功；
 - 用真实上一 Release 和 RC2 Draft 在自动 Linux 隔离环境完成 lifecycle，并用最终
   RC4 Draft 在 macOS 真机完成安装 → upgrade → Hook 字节不变 → fixture 发送 →
   rollback → uninstall；Release/CI 链接均已保存。
