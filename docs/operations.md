@@ -1,36 +1,29 @@
 # AgentBell 安装与运维
 
-最新已发布版本是 `v0.3.0-rc.5` Technical Preview，包含原生 Core、持久队列、
+最新已发布版本是 `v0.3.0-rc.6` Technical Preview，包含原生 Core、持久队列、
 `agentbell setup`、`agentbell test`、Codex / Claude Code / Kimi Code / OpenCode /
 Qoder / QoderWork / TRAE Adapter、三平台登录自启动及当前 M2 命令面。所有 Adapter
 仍为 Pilot；GUI 安装器、正式代码签名和 M2 完整实机矩阵仍属于后续发布阶段。
 
 ## 安装 Core
 
-发布包可从私有 GitHub Release 下载。使用 npm bootstrap 时，私有仓库需要只读 GitHub
-token；token 只进入 HTTP `Authorization` header，不写入 URL、安装元数据或仓库。
-
-两个 npm 包已经公开并配置 Trusted Publisher。仓库当前仍为私有仓库，因此 bootstrap
-下载 Core 前需要给当前进程提供只读 GitHub token：
+发布包可从公开 GitHub Release 匿名下载；两个 npm 包也已公开并配置 Trusted
+Publisher。PowerShell：
 
 ```powershell
-$env:AGENTBELL_GITHUB_TOKEN = gh auth token
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.5
-Remove-Item Env:AGENTBELL_GITHUB_TOKEN
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.6
 ```
 
 macOS/Linux：
 
 ```bash
-export AGENTBELL_GITHUB_TOKEN="$(gh auth token)"
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.5
-unset AGENTBELL_GITHUB_TOKEN
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.6
 ```
 
 bootstrap 先下载 `checksums.txt`，校验 SHA-256 后才把
 Core 移入版本目录；校验失败的文件不会执行。
-私有仓库使用 GitHub Releases API 定位 asset，并用同一个只读 token 下载；公开仓库和
-`AGENTBELL_RELEASE_BASE_URL` 指向的测试镜像仍使用标准 Release 下载路径。
+公开仓库使用标准 Release 下载路径；私有 fork 可通过 `AGENTBELL_GITHUB_TOKEN` 提供
+只读 token，`AGENTBELL_RELEASE_BASE_URL` 可指向受控测试镜像。
 
 M0.5 产物未签名。`install.json` 和 `release-manifest.json` 的
 `signatureStatus` 必须为 `technical-preview`。
@@ -105,8 +98,10 @@ AgentBell 不保存或复制 `lark-cli` token。先按飞书官方 CLI 完成认
 
 1. 检测操作系统和已安装的 Agent CLI；
 2. 引导安装 `lark-cli` 并完成 `lark-cli config init` 与
-   `lark-cli auth login --domain im`；
-3. 搜索或创建目标飞书会话；
+   `lark-cli auth login --domain im`；setup 必须验证到可用的 `user` 身份和当前用户的
+   open_id，仅有 bot 授权不会继续；
+3. 搜索或创建目标飞书会话。搜索结果只包含当前用户与 AgentBell bot 都已加入的群；
+   bot 新建私有群时会显式邀请已验证的当前用户；
 4. 把配置原子写入平台目录的 `config.json`（见“平台路径”表）；
 5. 可选安装 Codex / Claude Code / Kimi Code / OpenCode / Qoder / QoderWork /
    TRAE Adapter；
@@ -121,20 +116,23 @@ agentbell setup --dry-run
 agentbell setup --json
 ```
 
-`agentbell test` 通过 `lark-cli` 直接向通道发送一条测试消息，不经过本地队列，
-用于验证绑定结果：
+`agentbell test` 不经过本地队列。它先以 `user` 身份分页检查当前用户确实在目标群中，
+再用通道配置的身份发送测试消息；这样 bot-only 群不会再产生“发送成功但手机收不到”的
+假阳性：
 
 ```text
 agentbell test
 agentbell test --channel team --json
 ```
 
-`--channel <id>` 指定目标通道，缺省使用 `defaultChannel`。成功输出只包含 AgentBell
-channel id、状态和发送时间，不回显真实飞书 chat id。
+`--channel <id>` 指定目标通道，缺省使用 `defaultChannel`。JSON 输出包含
+`recipientReachable` 和 `checkedAt`，只有实际发送成功才包含 `sentAt`；输出不会回显真实
+飞书 chat id 或 user open_id。若成员检查失败，重新运行 `agentbell setup` 并选择一个
+用户与 bot 都已加入的群。
 
 ## M2 Technical Preview 命令
 
-RC5 可以在隔离数据目录中使用本机设置、一次性绑定和 stable bridge：
+RC6 可以在隔离数据目录中使用本机设置、一次性绑定和 stable bridge：
 
 ```text
 agentbell settings show --effective --json
@@ -438,7 +436,10 @@ agentbell service status --json
 `service install` 会把当前可用的 `lark-cli` 绝对路径迁移进配置。平台后端：
 
 - macOS：`~/Library/LaunchAgents/com.agentbell.service.plist`；
-- Windows：当前用户的 `\AgentBell\AgentBell` ONLOGON 计划任务；
+- Windows：当前用户的 `\AgentBell\AgentBell` ONLOGON 计划任务；Windows Release 仅把
+  常驻 `agentbell-bridge.exe` 链接为 GUI subsystem，并使用 `CREATE_NO_WINDOW` 拉起后台
+  Core，登录任务和 Hook 启动时都不会创建控制台窗口；用户直接运行的 `agentbell.exe`
+  仍是正常 Console subsystem；
 - Linux：`${XDG_CONFIG_HOME:-~/.config}/systemd/user/agentbell.service`，若
   `systemctl --user` 不可用则写入
   `${XDG_CONFIG_HOME:-~/.config}/autostart/com.agentbell.service.desktop`。
@@ -450,6 +451,11 @@ macOS LaunchAgent 会显式设置安装用户的 `HOME` 和固定 `PATH`；`HOME
 Windows 的 npm 安装通常解析到 `lark-cli.cmd`；发送器会自动调用同目录
 `lark-cli.ps1` 并按独立参数传递通知文本，避免 `cmd.exe` 对引号和元字符的二次解析。
 若该配套 shim 缺失，事件会以永久配置错误进入 dead，而不是无休止重试。
+旧版 Windows bridge 若以 Console subsystem 构建，计划任务启动后会出现标题为 bridge
+绝对路径的常驻黑窗；窗口不自动退出是因为后台服务仍在运行，并非 setup 卡死。任务
+计划程序的 `Hidden` 设置只隐藏任务条目，不能隐藏进程窗口。永久修复需要升级到包含
+windowless bridge 的 Release，并重新执行 `agentbell service install`；在升级前关闭该
+窗口会同时终止后台通知进程。
 升级 Core 或调整路径后可重复执行，不会创建多个同名服务。临时调试可前台运行：
 
 ```text

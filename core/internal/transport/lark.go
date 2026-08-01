@@ -3,6 +3,7 @@ package transport
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -43,8 +44,9 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 		return nil, err
 	}
 	command := exec.CommandContext(ctx, name, args...)
+	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	command.Stdout = nil
+	command.Stdout = &limitedWriter{writer: &stdout, remaining: 1024 * 1024}
 	command.Stderr = &limitedWriter{writer: &stderr, remaining: 4096}
 	err = command.Run()
 	if err != nil {
@@ -53,7 +55,7 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 		}
 		return nil, err
 	}
-	return nil, nil
+	return stdout.Bytes(), nil
 }
 
 func executableCommand(
@@ -99,6 +101,91 @@ type LarkCLI struct {
 	Runner  Runner
 	Timeout time.Duration
 	Command string
+}
+
+type chatListItem struct {
+	ID string `json:"chat_id"`
+}
+
+type chatListResponse struct {
+	Data struct {
+		Chats     []chatListItem `json:"chats"`
+		Items     []chatListItem `json:"items"`
+		HasMore   bool           `json:"has_more"`
+		PageToken string         `json:"page_token"`
+	} `json:"data"`
+}
+
+// VerifyUserReachability proves that the currently authorized Feishu user is
+// a member of the configured chat. A successful bot send alone is insufficient:
+// Feishu permits a bot-only group, which produces a false-positive test result.
+func (sender LarkCLI) VerifyUserReachability(
+	ctx context.Context,
+	channel config.Channel,
+) error {
+	if channel.ChatID == "" {
+		return permanentError{err: errors.New("selected Feishu channel has no chatId")}
+	}
+	timeout := sender.Timeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	command := sender.Command
+	if command == "" {
+		command = "lark-cli"
+	}
+	verifyContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	pageToken := ""
+	seenTokens := map[string]struct{}{}
+	for {
+		args := []string{
+			"im",
+			"+chat-list",
+			"--as",
+			"user",
+			"--page-size",
+			"100",
+		}
+		if pageToken != "" {
+			args = append(args, "--page-token", pageToken)
+		}
+		args = append(args, "--format", "json")
+		output, err := sender.runner().Run(verifyContext, command, args...)
+		if errors.Is(verifyContext.Err(), context.DeadlineExceeded) {
+			return errors.New("lark-cli recipient verification timed out")
+		}
+		if err != nil {
+			return errors.New(
+				"cannot verify the Feishu user recipient; update lark-cli if needed, run `lark-cli auth login --domain im`, then run `agentbell setup` again",
+			)
+		}
+		var response chatListResponse
+		if err := json.Unmarshal(output, &response); err != nil {
+			return fmt.Errorf("cannot parse lark-cli chat list while verifying the recipient: %w", err)
+		}
+		chats := append(response.Data.Chats, response.Data.Items...)
+		for _, chat := range chats {
+			if chat.ID == channel.ChatID {
+				return nil
+			}
+		}
+		if !response.Data.HasMore {
+			break
+		}
+		pageToken = strings.TrimSpace(response.Data.PageToken)
+		if pageToken == "" {
+			return errors.New("lark-cli chat list reported more pages without a page token")
+		}
+		if _, exists := seenTokens[pageToken]; exists {
+			return errors.New("lark-cli chat list repeated a page token")
+		}
+		seenTokens[pageToken] = struct{}{}
+	}
+	return permanentError{err: errors.New(
+		"the authorized Feishu user is not a member of the configured notification chat; run `agentbell setup` again and choose a chat shared by the user and bot",
+	)}
 }
 
 func (sender LarkCLI) Send(ctx context.Context, channel config.Channel, text string) error {

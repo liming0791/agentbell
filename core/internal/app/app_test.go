@@ -330,28 +330,52 @@ func TestSetupDryRunCommand(t *testing.T) {
 }
 
 func writeFakeLarkCLI(t *testing.T, succeeds bool) string {
+	return writeFakeLarkCLIForRecipient(t, succeeds, true)
+}
+
+func writeFakeLarkCLIForRecipient(t *testing.T, succeeds, reachable bool) string {
 	t.Helper()
 	directory := t.TempDir()
+	chatList := `{"data":{"chats":[],"has_more":false}}`
+	if reachable {
+		chatList = `{"data":{"chats":[{"chat_id":"oc_test"},{"chat_id":"oc_spare"}],"has_more":false}}`
+	}
 	if runtime.GOOS == "windows" {
 		commandPath := filepath.Join(directory, "lark-cli.cmd")
 		if err := os.WriteFile(commandPath, []byte("@echo off\r\nexit /b 0\r\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		powerShellPath := filepath.Join(directory, "lark-cli.ps1")
-		script := "exit 0\n"
+		sendResult := "exit 0"
 		if !succeeds {
-			script = "Write-Error 'nope'\nexit 1\n"
+			sendResult = "Write-Error 'nope'\n  exit 1"
 		}
+		script := "$joined = $args -join ' '\n" +
+			"if ($joined -match '\\+chat-list') {\n" +
+			"  Write-Output '" + chatList + "'\n" +
+			"  exit 0\n" +
+			"}\n" +
+			"if ($joined -match '\\+messages-send') {\n  " + sendResult + "\n}\n" +
+			"exit 0\n"
 		if err := os.WriteFile(powerShellPath, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return commandPath
 	}
 	path := filepath.Join(directory, "lark-cli")
-	script := "#!/bin/sh\nexit 0\n"
+	sendResult := "exit 0"
 	if !succeeds {
-		script = "#!/bin/sh\necho nope >&2\nexit 1\n"
+		sendResult = "echo nope >&2\n    exit 1"
 	}
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  *\"+chat-list\"*)\n" +
+		"    printf '%s\\n' '" + chatList + "'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"+messages-send\"*)\n    " + sendResult + "\n    ;;\n" +
+		"esac\n" +
+		"exit 0\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -396,6 +420,9 @@ func TestTestCommandSendsMessage(t *testing.T) {
 	if result["ok"] != true || result["channel"] != "feishu" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
+	if result["recipientReachable"] != true {
+		t.Fatalf("recipient was not reported as reachable: %#v", result)
+	}
 	if _, exposed := result["chatId"]; exposed || strings.Contains(stdout.String(), "oc_test") {
 		t.Fatalf("test JSON must not expose the destination chat id: %s", stdout.String())
 	}
@@ -433,6 +460,7 @@ func TestTestCommandChannelFlagAndFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result["ok"] != false || result["channel"] != "spare" ||
+		result["recipientReachable"] != true ||
 		!strings.Contains(result["error"].(string), "lark-cli notification failed") {
 		t.Fatalf("unexpected result: %#v", result)
 	}
@@ -453,12 +481,32 @@ func TestTestCommandWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestTestCommandRejectsBotOnlyChatBeforeSending(t *testing.T) {
+	writeTestConfig(t, writeFakeLarkCLIForRecipient(t, true, false))
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"test", "--json"}, strings.NewReader(""), &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("expected recipient verification failure")
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["ok"] != false || result["recipientReachable"] != false ||
+		!strings.Contains(result["error"].(string), "not a member") ||
+		strings.Contains(stdout.String(), "oc_test") || result["sentAt"] != nil ||
+		result["checkedAt"] == nil {
+		t.Fatalf("unexpected redacted reachability result: %#v", result)
+	}
+}
+
 func TestTestCommandHumanOutput(t *testing.T) {
 	writeTestConfig(t, writeFakeLarkCLI(t, true))
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run([]string{"test"}, strings.NewReader(""), &stdout, &stderr)
-	if code != 0 || !strings.Contains(stdout.String(), "测试消息已发送到频道 feishu") {
+	if code != 0 || !strings.Contains(stdout.String(), "已验证当前飞书用户可接收通知；测试消息已发送到频道 feishu") {
 		t.Fatalf("unexpected output: %d %s %s", code, stdout.String(), stderr.String())
 	}
 }

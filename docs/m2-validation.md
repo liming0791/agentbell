@@ -4,10 +4,10 @@
 
 | 项目 | 结论 |
 | --- | --- |
-| 记录日期 | 2026-07-30 |
+| 记录日期 | 2026-08-01 |
 | 本地实现 | P0～P6 自动化与本地门禁已实现 |
-| 发布状态 | `v0.3.0-rc.5` 已发布，仍为 Technical Preview / Pilot |
-| M2 退出结论 | **未通过**：RC5 发布完成；三平台完整矩阵和独立跨主机实机证据尚未完成 |
+| 发布状态 | `v0.3.0-rc.6` 已发布，仍为 Technical Preview / Pilot |
+| M2 退出结论 | **未通过**：RC6 发布完成；三平台完整矩阵和独立跨主机实机证据尚未完成 |
 
 本台账只记录可复现证据，不把 mock、交叉编译或自动 fixture 描述成实机通过。Adapter
 等级继续由 `docs/adapter-contract.md` 的产品实机矩阵决定。
@@ -26,7 +26,7 @@
 | M2-602 性能/压力 | stable bridge Hook p95、Relay/32 路 fan-out/queue benchmark、96 durable item stress gate | 本地通过 |
 | M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 旧 13-job 基线由 Actions run 30352561499 证明；2026-07-30 分层 workflow 已完成本地验证，首次远程 run 待提交后补证 |
 | M2-604 实机矩阵 | 下表 | 未通过 |
-| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | RC5 已发布：27 个 Release 资产、两个 npm 包、Trusted Publisher 和最终安装 smoke 通过；GitHub 账单拒绝启动的 job 使用下节记录的精确资产人工兜底 |
+| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | RC6 沿用两阶段 workflow 发布；RC5 的 27 个 Release 资产、两个 npm 包、Trusted Publisher 和最终安装 smoke 已通过，历史 GitHub 账单拒绝启动的 job 使用下节记录的精确资产人工兜底 |
 
 ## 2026-07-30 CI runner 使用优化
 
@@ -537,6 +537,26 @@ bridge；不能把前三项的局部 macOS 证据解释为五个产品、三平�
 ```bash
 npm run perf:m2
 ```
+
+## Windows stable bridge 无窗口修复（2026-08-01）
+
+Windows 实机完成 setup 后，飞书用户/bot 群聊与手机测试消息链路已通；安装登录服务时
+出现一个标题为 `%LOCALAPPDATA%\AgentBell\bin\bridge\v1\agentbell-bridge.exe` 的
+常驻黑色控制台窗口。该进程实际在执行 `service-v1`，不退出属于后台服务预期行为，
+但可见窗口会被用户误判为 setup 卡死或异常。
+
+根因是 Windows 计划任务直接执行 stable bridge，而 RC5 bridge 是 Console subsystem
+产物。Task Scheduler 的 `Hidden` 属性只控制任务是否显示在管理 UI，不控制进程窗口。
+Release 构建现仅对 Windows `agentbell-bridge` 增加 Go linker
+`-H=windowsgui`，且 Bridge 使用 `CREATE_NO_WINDOW` 拉起后台 Core，避免 Console
+subsystem 的 Core 再创建替代窗口；用户直接执行的 Windows Core 仍保持 Console
+subsystem，其他平台参数不变。
+自动测试覆盖六目标的参数选择；本机按正式 Release 脚本构建 12 个产物，并读取 PE
+Header 复验：Windows amd64/arm64 Core 均为 `WindowsCUI (3)`，bridge 均为
+`WindowsGUI (2)`。随后在独立临时 managed root 中启动新版 bridge 和已安装 Core，
+两者持续运行且 `MainWindowHandle` 均为 `0`；测试配置、队列和日志均隔离，未发送通知，
+测试后进程与临时目录已清理。已安装 RC5 不会被工作树修改，仍需下一 Release 升级并
+重新安装服务后完成真实登录/重启无窗口复验。
 
 ## 实机矩阵
 

@@ -577,29 +577,24 @@ func (setup *Setup) ensureLarkConfig(ctx context.Context) error {
 	return nil
 }
 
-func (setup *Setup) larkAuthorized(ctx context.Context) bool {
-	_, err := setup.capture(ctx, "auth", "status", "--verify")
-	return err == nil
-}
-
 func (setup *Setup) ensureLarkAuth(ctx context.Context) error {
-	if setup.larkAuthorized(ctx) {
-		setup.printf("飞书登录状态正常")
+	if _, err := setup.verifiedUserAuth(ctx); err == nil {
+		setup.printf("飞书用户登录状态正常")
 		return nil
 	}
-	setup.printf("lark-cli 尚未登录或授权已过期")
+	setup.printf("尚未检测到可用的飞书用户授权；仅有 bot 身份不能保证手机用户收到通知")
 	confirmed, err := setup.Prompter.Confirm("是否现在运行 `lark-cli auth login --domain im` 登录？")
 	if err != nil {
 		return err
 	}
 	if !confirmed {
-		return errors.New("setup 需要飞书登录，请运行 `lark-cli auth login --domain im` 后重试")
+		return errors.New("setup 需要飞书用户授权，请运行 `lark-cli auth login --domain im` 后重试")
 	}
 	if err := setup.Runner.Interactive(ctx, "lark-cli", "auth", "login", "--domain", "im"); err != nil {
 		return fmt.Errorf("lark-cli auth login 失败：%w", err)
 	}
-	if !setup.larkAuthorized(ctx) {
-		return errors.New("登录验证仍未通过，请检查 `lark-cli auth status`")
+	if _, err := setup.verifiedUserAuth(ctx); err != nil {
+		return errors.New("飞书用户登录验证仍未通过，请检查 `lark-cli auth status --verify --json`")
 	}
 	return nil
 }
@@ -620,20 +615,55 @@ var chatIDPattern = regexp.MustCompile(`"chat_id"\s*:\s*"(oc_[^"]+)"`)
 // authStatus 是 `lark-cli auth status` 输出中与 setup 相关的字段。
 type authStatus struct {
 	Identity   string `json:"identity"`
+	Verified   *bool  `json:"verified"`
 	UserOpenID string `json:"userOpenId"`
+	Identities struct {
+		User authIdentityStatus `json:"user"`
+	} `json:"identities"`
 }
 
-// currentAuth 读取当前登录身份。失败时返回零值，调用方按无用户身份降级。
-func (setup *Setup) currentAuth(ctx context.Context) authStatus {
-	output, err := setup.capture(ctx, "auth", "status")
+type authIdentityStatus struct {
+	Status    string `json:"status"`
+	Available bool   `json:"available"`
+	Verified  *bool  `json:"verified"`
+	OpenID    string `json:"openId"`
+}
+
+func (status authStatus) verifiedUserOpenID() (string, bool) {
+	user := status.Identities.User
+	hasSplitIdentity := user.Status != "" || user.OpenID != "" || user.Verified != nil
+	if hasSplitIdentity {
+		if !user.Available || (user.Verified != nil && !*user.Verified) ||
+			!strings.HasPrefix(user.OpenID, "ou_") {
+			return "", false
+		}
+		return user.OpenID, true
+	}
+	if status.Identity != "user" ||
+		(status.Verified != nil && !*status.Verified) ||
+		!strings.HasPrefix(status.UserOpenID, "ou_") {
+		return "", false
+	}
+	return status.UserOpenID, true
+}
+
+// verifiedUserAuth 验证当前默认身份确实是已授权用户。bot token 只能证明应用
+// 自身可调用 API，不能证明安装 AgentBell 的用户能够看到通知目标。
+func (setup *Setup) verifiedUserAuth(ctx context.Context) (authStatus, error) {
+	output, err := setup.capture(ctx, "auth", "status", "--verify", "--json")
 	if err != nil {
-		return authStatus{}
+		return authStatus{}, err
 	}
 	var status authStatus
 	if err := json.Unmarshal(output, &status); err != nil {
-		return authStatus{}
+		return authStatus{}, fmt.Errorf("解析飞书登录状态失败：%w", err)
 	}
-	return status
+	userOpenID, ok := status.verifiedUserOpenID()
+	if !ok {
+		return authStatus{}, errors.New("当前身份不是已授权的飞书用户")
+	}
+	status.UserOpenID = userOpenID
+	return status, nil
 }
 
 func (setup *Setup) selectDestination(
@@ -691,28 +721,73 @@ func (setup *Setup) searchChat(ctx context.Context) (config.Channel, error) {
 	if keyword == "" {
 		return config.Channel{}, errors.New("搜索关键词不能为空")
 	}
-	output, err := setup.capture(ctx, "im", "+chat-search", "--query", keyword, "--format", "json")
+	userChats, err := setup.searchChats(ctx, "user", keyword)
 	if err != nil {
-		return config.Channel{}, fmt.Errorf("搜索群聊失败：%w", err)
+		return config.Channel{}, errors.New(
+			"使用飞书用户身份搜索群聊失败；请运行 `lark-cli auth login --domain im` 并确认已授权 im:chat:read",
+		)
 	}
-	var response chatSearchResponse
-	if err := json.Unmarshal(output, &response); err != nil {
-		return config.Channel{}, fmt.Errorf("解析群聊搜索结果失败：%w", err)
+	botChats, err := setup.searchChats(ctx, "bot", keyword)
+	if err != nil {
+		return config.Channel{}, errors.New(
+			"使用 AgentBell 机器人身份搜索群聊失败；请确认应用已启用机器人能力和 im:chat:read",
+		)
 	}
-	if len(response.Data.Chats) == 0 {
-		return config.Channel{}, fmt.Errorf("没有找到与 %q 匹配的群聊", keyword)
+	botVisible := make(map[string]struct{}, len(botChats))
+	for _, chat := range botChats {
+		botVisible[chat.ID] = struct{}{}
 	}
-	options := make([]string, 0, len(response.Data.Chats))
-	for _, chat := range response.Data.Chats {
+	sharedChats := make([]chatSummary, 0, len(userChats))
+	for _, chat := range userChats {
+		if _, ok := botVisible[chat.ID]; ok {
+			sharedChats = append(sharedChats, chat)
+		}
+	}
+	if len(sharedChats) == 0 {
+		return config.Channel{}, fmt.Errorf(
+			"没有找到用户和 AgentBell 机器人都已加入、且与 %q 匹配的群聊；请先把机器人加入目标群，或重新运行 setup 选择新建通知群",
+			keyword,
+		)
+	}
+	options := make([]string, 0, len(sharedChats))
+	for _, chat := range sharedChats {
 		options = append(options, fmt.Sprintf("%s（%s）", chat.Name, chat.ID))
 	}
 	selected, err := setup.Prompter.Select("选择要接收通知的群聊", options)
 	if err != nil {
 		return config.Channel{}, err
 	}
-	chat := response.Data.Chats[selected]
+	chat := sharedChats[selected]
 	setup.printf("已选择群聊：%s（%s）", chat.Name, chat.ID)
 	return channelForChat(chat.ID, chat.Name), nil
+}
+
+func (setup *Setup) searchChats(
+	ctx context.Context,
+	identity string,
+	keyword string,
+) ([]chatSummary, error) {
+	output, err := setup.capture(
+		ctx,
+		"im",
+		"+chat-search",
+		"--query",
+		keyword,
+		"--search-types",
+		"private,public_joined,external",
+		"--as",
+		identity,
+		"--format",
+		"json",
+	)
+	if err != nil {
+		return nil, err
+	}
+	var response chatSearchResponse
+	if err := json.Unmarshal(output, &response); err != nil {
+		return nil, fmt.Errorf("解析群聊搜索结果失败：%w", err)
+	}
+	return response.Data.Chats, nil
 }
 
 func (setup *Setup) createChat(ctx context.Context) (config.Channel, error) {
@@ -723,20 +798,26 @@ func (setup *Setup) createChat(ctx context.Context) (config.Channel, error) {
 	if name == "" {
 		name = defaultChatName
 	}
+	status, err := setup.verifiedUserAuth(ctx)
+	if err != nil {
+		return config.Channel{}, errors.New(
+			"创建通知群前无法确认飞书用户身份；请重新运行 `lark-cli auth login --domain im`",
+		)
+	}
 	args := []string{
 		"im", "+chat-create",
 		"--name", name,
 		"--chat-mode", "group",
 		"--type", "private",
-	}
-	// bot 身份建群时用户不在群内，需要显式邀请，否则用户收不到通知。
-	if status := setup.currentAuth(ctx); status.Identity == "bot" && status.UserOpenID != "" {
-		args = append(args, "--users", status.UserOpenID)
+		"--users", status.UserOpenID,
+		"--as", "bot",
 	}
 	args = append(args, "--format", "json")
 	output, err := setup.capture(ctx, args...)
 	if err != nil {
-		return config.Channel{}, fmt.Errorf("创建群聊失败：%w", err)
+		return config.Channel{}, errors.New(
+			"创建群聊失败；请确认应用具有 im:chat:create 权限，且当前用户在应用可用范围内",
+		)
 	}
 	match := chatIDPattern.FindSubmatch(output)
 	if match == nil {
