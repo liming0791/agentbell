@@ -52,6 +52,10 @@ test("Ubuntu CI runs the M2 durable relay stress gate", async () => {
   );
   assert.match(workflow, /\n[ ]{2}m2-stress:\n/u);
   assert.match(workflow, /runs-on: ubuntu-latest/u);
-  assert.match(workflow, /run: npm run perf:m2/u);
+  assert.match(workflow, /run: node scripts\/benchmark-m2\.mjs/u);
+  assert.doesNotMatch(
+    workflow.match(/\n {2}m2-stress:\n[\s\S]*?(?=\n {2}[a-z0-9-]+:\n|$)/u)?.[0] ?? "",
+    /npm run perf:m2/u
+  );
   assert.match(workflow, /AGENTBELL_M2_STRESS_ITEMS: "96"/u);
 });

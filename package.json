@@ -19,6 +19,7 @@
   "scripts": {
     "build:core": "node ./scripts/build-core.mjs",
     "check": "node ./scripts/check-structure.mjs",
+    "check:docs": "node ./scripts/check-structure.mjs && node ./scripts/check-doc-links.mjs",
     "ci": "npm run lint && npm run check && npm run test:coverage && npm run go:check && npm run pack:check",
     "doctor": "node ./packages/cli/bin/agentbell.mjs bootstrap-doctor",
     "go:check": "node ./scripts/check-go.mjs",
