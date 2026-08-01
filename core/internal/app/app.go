@@ -926,12 +926,20 @@ func runTest(args []string, stdout io.Writer) error {
 		now.Format("2006-01-02 15:04:05"),
 	)
 	sender := transport.LarkCLI{Command: loaded.LarkCLIPath}
-	sendErr := sender.Send(context.Background(), channel, text)
+	verifyErr := sender.VerifyUserReachability(context.Background(), channel)
+	sendErr := verifyErr
+	if verifyErr == nil {
+		sendErr = sender.Send(context.Background(), channel, text)
+	}
 	if *asJSON {
 		result := map[string]any{
-			"ok":      sendErr == nil,
-			"channel": channel.ID,
-			"sentAt":  now.UTC().Format(time.RFC3339),
+			"ok":                 sendErr == nil,
+			"channel":            channel.ID,
+			"checkedAt":          now.UTC().Format(time.RFC3339),
+			"recipientReachable": verifyErr == nil,
+		}
+		if sendErr == nil {
+			result["sentAt"] = now.UTC().Format(time.RFC3339)
 		}
 		if sendErr != nil {
 			result["error"] = sendErr.Error()
@@ -940,7 +948,7 @@ func runTest(args []string, stdout io.Writer) error {
 			return err
 		}
 	} else if sendErr == nil {
-		fmt.Fprintf(stdout, "测试消息已发送到频道 %s\n", channel.ID)
+		fmt.Fprintf(stdout, "已验证当前飞书用户可接收通知；测试消息已发送到频道 %s\n", channel.ID)
 	}
 	return sendErr
 }

@@ -3,6 +3,7 @@ package setup
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -124,13 +125,16 @@ func newFixture(t *testing.T) (*Setup, *fakeRunner, *fakePrompter, *fakeHookAdap
 	}
 	runner := &fakeRunner{
 		captureResponses: map[string][]byte{
-			"lark-cli --version":            []byte("lark-cli version 1.0.30\n"),
-			"lark-cli config show":          []byte(`{"appId":"cli_test"}`),
-			"lark-cli auth status --verify": []byte(`{"ok":true}`),
-			`lark-cli im +chat-search --query 通知 --format json`: []byte(
+			"lark-cli --version":                   []byte("lark-cli version 1.0.81\n"),
+			"lark-cli config show":                 []byte(`{"appId":"cli_test"}`),
+			"lark-cli auth status --verify --json": []byte(`{"identity":"user","identities":{"user":{"status":"ready","available":true,"verified":true,"openId":"ou_setup_user"}}}`),
+			`lark-cli im +chat-search --query 通知 --search-types private,public_joined,external --as user --format json`: []byte(
 				`{"ok":true,"data":{"chats":[{"chat_id":"oc_found","name":"运维通知"}]}}`,
 			),
-			`lark-cli im +chat-create --name AgentBell 通知 --chat-mode group --type private --format json`: []byte(
+			`lark-cli im +chat-search --query 通知 --search-types private,public_joined,external --as bot --format json`: []byte(
+				`{"ok":true,"data":{"chats":[{"chat_id":"oc_found","name":"运维通知"}]}}`,
+			),
+			`lark-cli im +chat-create --name AgentBell 通知 --chat-mode group --type private --users ou_setup_user --as bot --format json`: []byte(
 				`{"ok":true,"data":{"chat_id":"oc_created"}}`,
 			),
 		},
@@ -217,6 +221,80 @@ func TestSetupHappyPathSearchChat(t *testing.T) {
 	out := setup.Out.(*bytes.Buffer).String()
 	if !strings.Contains(out, "设置完成") || !strings.Contains(out, "agentbell test") {
 		t.Fatalf("missing next steps in output: %s", out)
+	}
+}
+
+func TestSetupRequiresUserAuthWhenOnlyBotIsAuthorized(t *testing.T) {
+	setup, runner, prompter, _, _ := newFixture(t)
+	runner.captureResponses["lark-cli auth status --verify --json"] = []byte(
+		`{"identity":"bot","identities":{"user":{"status":"missing","available":false},"bot":{"status":"ready","available":true}}}`,
+	)
+	prompter.confirms = []bool{false}
+
+	_, err := setup.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "飞书用户授权") {
+		t.Fatalf("expected user authorization error, got %v", err)
+	}
+	if len(runner.interactiveCalls) != 0 {
+		t.Fatalf("declined login must not run an interactive command: %#v", runner.interactiveCalls)
+	}
+}
+
+func TestVerifiedUserAuthSupportsLegacyAndRejectsFailedVerification(t *testing.T) {
+	setup, runner, _, _, _ := newFixture(t)
+	runner.captureResponses["lark-cli auth status --verify --json"] = []byte(
+		`{"identity":"user","verified":true,"userOpenId":"ou_legacy_user"}`,
+	)
+	status, err := setup.verifiedUserAuth(context.Background())
+	if err != nil || status.UserOpenID != "ou_legacy_user" {
+		t.Fatalf("legacy auth status was not accepted: status=%#v err=%v", status, err)
+	}
+
+	verified := false
+	failedStatus := authStatus{Identity: "user"}
+	failedStatus.Identities.User = authIdentityStatus{
+		Status:    "invalid",
+		Available: true,
+		Verified:  &verified,
+		OpenID:    "ou_unverified_user",
+	}
+	encoded, err := json.Marshal(failedStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.captureResponses["lark-cli auth status --verify --json"] = encoded
+	if _, err := setup.verifiedUserAuth(context.Background()); err == nil {
+		t.Fatal("a user whose remote verification failed must be rejected")
+	}
+}
+
+func TestSetupSearchOnlyOffersChatsSharedByUserAndBot(t *testing.T) {
+	setup, runner, _, _, _ := newFixture(t)
+	runner.captureResponses[`lark-cli im +chat-search --query 通知 --search-types private,public_joined,external --as user --format json`] = []byte(
+		`{"ok":true,"data":{"chats":[{"chat_id":"oc_user_only","name":"用户群"},{"chat_id":"oc_shared","name":"共同群"}]}}`,
+	)
+	runner.captureResponses[`lark-cli im +chat-search --query 通知 --search-types private,public_joined,external --as bot --format json`] = []byte(
+		`{"ok":true,"data":{"chats":[{"chat_id":"oc_bot_only","name":"机器人群"},{"chat_id":"oc_shared","name":"共同群"}]}}`,
+	)
+
+	report, err := setup.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Channel == nil || report.Channel.ChatID != "oc_shared" {
+		t.Fatalf("setup selected a chat that was not shared: %#v", report.Channel)
+	}
+}
+
+func TestSetupSearchErrorDoesNotExposeUserIdentity(t *testing.T) {
+	setup, runner, _, _, _ := newFixture(t)
+	key := `lark-cli im +chat-search --query 通知 --search-types private,public_joined,external --as user --format json`
+	runner.captureErrors[key] = errors.New("authentication failed for ou_sensitive_user")
+
+	_, err := setup.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "auth login --domain im") ||
+		strings.Contains(err.Error(), "ou_sensitive_user") {
+		t.Fatalf("expected redacted, actionable search error, got %v", err)
 	}
 }
 
@@ -438,9 +516,9 @@ func TestSetupCreateChatInvitesUserAsBot(t *testing.T) {
 	setup, runner, prompter, _, _ := newFixture(t)
 	prompter.selects = []int{1}    // create new chat
 	prompter.inputs = []string{""} // default name
-	runner.captureResponses["lark-cli auth status"] = []byte(
-		`{"identity":"bot","userOpenId":"ou_user1"}`)
-	runner.captureResponses[`lark-cli im +chat-create --name AgentBell 通知 --chat-mode group --type private --users ou_user1 --format json`] = []byte(
+	runner.captureResponses["lark-cli auth status --verify --json"] = []byte(
+		`{"identity":"user","identities":{"user":{"status":"ready","available":true,"verified":true,"openId":"ou_user1"}}}`)
+	runner.captureResponses[`lark-cli im +chat-create --name AgentBell 通知 --chat-mode group --type private --users ou_user1 --as bot --format json`] = []byte(
 		`{"ok":true,"data":{"chat_id":"oc_created_with_user"}}`)
 	report, err := setup.Run(context.Background())
 	if err != nil {
@@ -705,7 +783,7 @@ func (runner *statefulRunner) Capture(ctx context.Context, name string, args ...
 	if key == "lark-cli config show" && !*runner.configured {
 		return nil, errors.New("no config")
 	}
-	if key == "lark-cli auth status --verify" && !*runner.authorized {
+	if key == "lark-cli auth status --verify --json" && !*runner.authorized {
 		return nil, errors.New("not logged in")
 	}
 	return runner.fakeRunner.Capture(ctx, name, args...)
@@ -796,7 +874,7 @@ func TestSetupRejectsCorruptExistingConfig(t *testing.T) {
 
 func TestSetupEmptySearchResult(t *testing.T) {
 	setup, runner, _, _, _ := newFixture(t)
-	runner.captureResponses[`lark-cli im +chat-search --query 通知 --format json`] = []byte(
+	runner.captureResponses[`lark-cli im +chat-search --query 通知 --search-types private,public_joined,external --as user --format json`] = []byte(
 		`{"ok":true,"data":{"chats":null}}`,
 	)
 	_, err := setup.Run(context.Background())
@@ -883,10 +961,13 @@ func TestSetupOpenCodeQoderAndM15Adapters(t *testing.T) {
 	}
 	runner := &fakeRunner{
 		captureResponses: map[string][]byte{
-			"lark-cli --version":            []byte("lark-cli version 1.0.30\n"),
-			"lark-cli config show":          []byte(`{"appId":"cli_test"}`),
-			"lark-cli auth status --verify": []byte(`{"ok":true}`),
-			`lark-cli im +chat-search --query 通知 --format json`: []byte(
+			"lark-cli --version":                   []byte("lark-cli version 1.0.81\n"),
+			"lark-cli config show":                 []byte(`{"appId":"cli_test"}`),
+			"lark-cli auth status --verify --json": []byte(`{"identity":"user","identities":{"user":{"status":"ready","available":true,"verified":true,"openId":"ou_setup_user"}}}`),
+			`lark-cli im +chat-search --query 通知 --search-types private,public_joined,external --as user --format json`: []byte(
+				`{"ok":true,"data":{"chats":[{"chat_id":"oc_found","name":"运维通知"}]}}`,
+			),
+			`lark-cli im +chat-search --query 通知 --search-types private,public_joined,external --as bot --format json`: []byte(
 				`{"ok":true,"data":{"chats":[{"chat_id":"oc_found","name":"运维通知"}]}}`,
 			),
 		},

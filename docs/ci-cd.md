@@ -16,7 +16,7 @@ npm run perf:emit
 npm run perf:m2
 npm run smoke:https       # Linux / Ubuntu CI
 npm run build:core
-npm run release:verify -- v0.3.0-rc.5
+npm run release:verify -- v0.3.0-rc.6
 ```
 
 `perf:emit` 实际通过受管 `active.json` 和 stable `agentbell-bridge hook-v1`
@@ -69,7 +69,9 @@ CI 按改动状态分层，避免同一批代码在 Draft、Ready PR 和 merge c
 - Ubuntu 执行 M2 durable relay stress gate；
 - Ubuntu 使用临时 CA、正常 x509 校验和 SPKI pin 执行真实 TLS/HTTPS
   pairing、ACK、断网恢复、去重、metadata-only 与 runtime proof smoke；
-- Ubuntu 干净 runner 交叉构建六个 Core 和 stable bridge 目标；同一 runner 默认两路
+- Ubuntu 干净 runner 交叉构建六个 Core 和 stable bridge 目标；Windows stable bridge
+  使用 `-H=windowsgui`，并以 `CREATE_NO_WINDOW` 拉起后台 Core；Windows Core 本身保持
+  Console subsystem，避免后台登录任务弹出常驻控制台；同一 runner 默认两路
   并行，避免拆 job，同时缩短墙钟时间。
 
 本地需要复现单路构建或调整 runner 内并发时，可设置
@@ -88,11 +90,11 @@ version/commit/buildTime 的 12 个产物必须逐字节一致。
 - `M2 TLS and HTTPS relay smoke`
 - `Six-target Core and bridge build`
 
-当前仓库是个人 GitHub Free 私有仓库，GitHub 不提供该仓库的分支保护/Rulesets；在能力
-升级前，合并要求仍需由维护者确认 Ready PR 的完整矩阵全部通过。未来启用必需检查时，
-应使用不会因 path filter 缺失的聚合门禁，不能直接要求 Markdown-only PR 不会创建的
-job。Release 的 stage 和 finalize 门禁不使用上述节流逻辑，发布证据与两段式不可逆
-边界保持不变。
+当前仓库已公开，并启用禁止分支删除和 non-fast-forward 的 active Ruleset；该 Ruleset
+尚未把 CI job 设为必需检查，因此合并仍需由维护者确认 Ready PR 的完整矩阵全部通过。
+未来启用必需检查时，应使用不会因 path filter 缺失的聚合门禁，不能直接要求
+Markdown-only PR 不会创建的 job。Release 的 stage 和 finalize 门禁不使用上述节流
+逻辑，发布证据与两段式不可逆边界保持不变。
 
 ## Release 流水线
 
@@ -163,10 +165,10 @@ M0.5 没有代码签名凭据。workflow 只接受
 `AGENTBELL_SIGNATURE_STATUS=technical-preview`；其他值会失败，避免把未签名产物标成
 signed。
 
-个人账号下的 GitHub 私有仓库不支持 Artifact Attestation 持久化。仓库变量
-`AGENTBELL_ATTESTATIONS_ENABLED=false` 时，workflow 明确跳过该可选步骤，并保留
-`checksums.txt`、`release-manifest.json` 和 Actions artifact 作为发布证据；迁移到支持
-该能力的仓库后，显式把变量设为 `true`。
+公开仓库已把 `AGENTBELL_ATTESTATIONS_ENABLED` 设为 `true`，Release workflow 会为
+发布产物写入 GitHub Artifact Attestation；若未来迁移到不支持该能力的仓库，只有显式
+设为 `false` 才会跳过该步骤，并继续保留 `checksums.txt`、`release-manifest.json` 和
+Actions artifact 作为发布证据。
 
 ## npm Trusted Publishing
 

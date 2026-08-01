@@ -83,7 +83,16 @@ try {
   );
   run(
     goExecutable,
-    ["build", "-trimpath", "-o", bridge, "./cmd/agentbell-bridge"],
+    [
+      "build",
+      "-trimpath",
+      ...(process.platform === "win32"
+        ? ["-ldflags", "-H=windowsgui"]
+        : []),
+      "-o",
+      bridge,
+      "./cmd/agentbell-bridge"
+    ],
     {
       cwd: path.join(root, "core"),
       env: { ...process.env, CGO_ENABLED: "0" },

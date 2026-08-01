@@ -57,7 +57,11 @@ Codex/Claude Code/Kimi Code Go Adapter、三平台登录服务和产品级统一
   参数（M0.5 从未真实发送，未暴露）。已移除并补测试。
 - bot 身份 `+chat-create` 建群不包含用户本人：setup 建群时解析
   `lark-cli auth status` 的 `identity`/`userOpenId`，bot 身份下自动 `--users` 邀请，
-  否则用户收不到通知。已补测试。
+  否则用户收不到通知。原修复仍允许 bot-only `auth status` 通过 setup，并在缺少
+  `userOpenId` 时静默创建 bot-only 群；该假阳性于 2026-08-01 Windows 实机复现。
+  当前工作树改为强制验证 user 身份，搜索群取 user/bot 可见性交集，新建群始终邀请
+  已验证用户，且兼容 lark-cli 1.0.41 前后的 auth status 输出结构；`agentbell test`
+  还会在发送前验证用户群成员关系并补回归测试。
 - Codex Adapter 安装时向 hooks.json 顶层写入 `description` 字段：Codex 0.142.5
   严格解析 hooks.json，未知顶层字段导致整个文件被忽略，所有钩子（含用户已有钩子）
   失效。已改为不写入、重复安装时自动清除遗留字段，并补自愈回归测试；本机

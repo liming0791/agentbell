@@ -11,15 +11,16 @@ AgentBell 是一个面向 Coding Agent CLI、IDE 和 Desktop Agent 的跨平台�
 审批提醒；完成通知继续使用 `Stop`。
 
 最新已发布版本为
-[`v0.3.0-rc.5`](https://github.com/liming0791/agentbell/releases/tag/v0.3.0-rc.5)
+[`v0.3.0-rc.6`](https://github.com/liming0791/agentbell/releases/tag/v0.3.0-rc.6)
 Technical Preview。该版本已包含 Go 单文件 Core、持久队列、七个 Adapter、
 `agentbell setup`、`agentbell test`、三平台用户服务及 M2 本地能力
 （见 [M1 验收记录](./docs/m1-setup-validation.md) 和
 [M2 验收台账](./docs/m2-validation.md)）。RC4 因原 npm scope 与既有第三方组织冲突
 而保持未公开 Draft；RC5 已改用当前账号所有的 `@liming0791` scope，并发布
-`@liming0791/agentbell-cli` 与 `@liming0791/agentbell-hook-runtime`。仓库目前仍是
-私有仓库，因此 npm bootstrap 下载原生 Core 时还需要具备仓库读取权限的 GitHub token；
-Node.js Hook runtime 仅保留为 M0 迁移期原型，不是正式 Hook 数据面。
+`@liming0791/agentbell-cli` 与 `@liming0791/agentbell-hook-runtime`。RC6 修复 setup/test
+无法证明真实用户可见通知群的问题，并让 Windows 登录后台服务不再弹出常驻控制台。
+仓库与 Release 均公开，npm bootstrap 可匿名下载原生 Core；Node.js Hook runtime
+仅保留为 M0 迁移期原型，不是正式 Hook 数据面。
 
 ## 首期范围
 
@@ -102,7 +103,7 @@ agentbell adapter uninstall all [--dry-run]
 agentbell uninstall [--dry-run] [--json] [--delete-remote-credential --confirm-delete-remote-credential]
 ```
 
-RC5 还包含 M2 的一次性绑定、完整 Channel 事务、stable Hook/Service bridge、
+RC6 包含 M2 的一次性绑定、完整 Channel 事务、stable Hook/Service bridge、
 `service restart`、Hook 冲突审计、受 sidecar/部分投递账本保护的 upgrade/rollback、
 `plugin verify` 与 Release keyless 插件签名，以及 relay pairing/ingress、远端
 metadata-only outbox、`remote test`、独立 Host connector registry、WSL/SSH/container
@@ -118,10 +119,8 @@ macOS 真实 M1 形态的 LaunchAgent 也已备份后迁移到 stable bridge，�
 ## 目标体验
 
 ```bash
-export AGENTBELL_GITHUB_TOKEN="$(gh auth token)"
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.5
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.6
 npx @liming0791/agentbell-cli@next setup
-unset AGENTBELL_GITHUB_TOKEN
 ```
 
 这组命令（M1 切片 1 起由 Core 实现，macOS 已实机验收）负责：

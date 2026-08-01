@@ -62,6 +62,7 @@ func (ExecRunner) Run(
 	command.Stdin = bytes.NewReader(input)
 	command.Stdout = stdout
 	command.Stderr = stderr
+	configureBackgroundChild(command)
 	return command.Run()
 }
 

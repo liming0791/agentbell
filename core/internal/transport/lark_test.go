@@ -14,15 +14,19 @@ import (
 )
 
 type fakeRunner struct {
-	name string
-	args []string
-	err  error
-	wait time.Duration
+	name    string
+	args    []string
+	calls   [][]string
+	output  []byte
+	outputs [][]byte
+	err     error
+	wait    time.Duration
 }
 
 func (runner *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	runner.name = name
 	runner.args = append([]string(nil), args...)
+	runner.calls = append(runner.calls, append([]string(nil), args...))
 	if runner.wait > 0 {
 		select {
 		case <-time.After(runner.wait):
@@ -30,7 +34,12 @@ func (runner *fakeRunner) Run(ctx context.Context, name string, args ...string) 
 			return nil, ctx.Err()
 		}
 	}
-	return nil, runner.err
+	if len(runner.outputs) > 0 {
+		output := runner.outputs[0]
+		runner.outputs = runner.outputs[1:]
+		return output, runner.err
+	}
+	return runner.output, runner.err
 }
 
 func TestLarkCLIUsesArgumentVector(t *testing.T) {
@@ -75,6 +84,86 @@ func TestLarkCLIErrorsAndTimeout(t *testing.T) {
 			errors.Unwrap(err) == nil {
 			t.Fatalf("missing chat id was not classified as permanent: %v", err)
 		}
+	}
+}
+
+func TestLarkCLIVerifiesUserReachability(t *testing.T) {
+	runner := &fakeRunner{output: []byte(
+		`{"ok":true,"data":{"chats":[{"chat_id":"oc_target"}],"has_more":false}}`,
+	)}
+	sender := LarkCLI{Runner: runner, Command: "lark-cli-test"}
+	err := sender.VerifyUserReachability(
+		context.Background(),
+		config.Channel{ChatID: "oc_target", As: "bot"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.args, "\x00")
+	if !strings.Contains(joined, "+chat-list") ||
+		!strings.Contains(joined, "user") ||
+		strings.Contains(joined, "oc_target") {
+		t.Fatalf("recipient verification arguments are unsafe or incomplete: %#v", runner.args)
+	}
+}
+
+func TestLarkCLIVerifiesPaginatedUserChatList(t *testing.T) {
+	runner := &fakeRunner{outputs: [][]byte{
+		[]byte(`{"data":{"chats":[{"chat_id":"oc_other"}],"has_more":true,"page_token":"next"}}`),
+		[]byte(`{"data":{"items":[{"chat_id":"oc_target"}],"has_more":false}}`),
+	}}
+	sender := LarkCLI{Runner: runner}
+	if err := sender.VerifyUserReachability(
+		context.Background(),
+		config.Channel{ChatID: "oc_target"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 2 ||
+		!strings.Contains(strings.Join(runner.calls[1], " "), "--page-token next") {
+		t.Fatalf("pagination was not followed: %#v", runner.calls)
+	}
+}
+
+func TestLarkCLIRejectsUnreachableUserRecipient(t *testing.T) {
+	runner := &fakeRunner{output: []byte(`{"data":{"chats":[],"has_more":false}}`)}
+	sender := LarkCLI{Runner: runner}
+	err := sender.VerifyUserReachability(
+		context.Background(),
+		config.Channel{ChatID: "oc_private_destination"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "not a member") ||
+		strings.Contains(err.Error(), "oc_private_destination") {
+		t.Fatalf("expected a redacted membership error, got %v", err)
+	}
+	var permanent interface {
+		Permanent() bool
+	}
+	if !errors.As(err, &permanent) || !permanent.Permanent() {
+		t.Fatalf("unreachable recipient must be permanent: %v", err)
+	}
+}
+
+func TestLarkCLIRecipientVerificationErrors(t *testing.T) {
+	runner := &fakeRunner{err: errors.New("user token missing: ou_sensitive")}
+	sender := LarkCLI{Runner: runner}
+	err := sender.VerifyUserReachability(
+		context.Background(),
+		config.Channel{ChatID: "oc_target"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "agentbell setup") ||
+		strings.Contains(err.Error(), "ou_sensitive") {
+		t.Fatalf("expected setup guidance, got %v", err)
+	}
+
+	runner.err = nil
+	runner.output = []byte("not-json")
+	err = sender.VerifyUserReachability(
+		context.Background(),
+		config.Channel{ChatID: "oc_target"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "cannot parse") {
+		t.Fatalf("expected parse error, got %v", err)
 	}
 }
 

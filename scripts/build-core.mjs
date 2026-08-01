@@ -46,6 +46,21 @@ export async function runBounded(items, limit, worker) {
   await Promise.all(Array.from({ length: workerCount }, () => consume()));
 }
 
+// The stable bridge is a background-only executable on Windows. Marking only
+// that artifact as a GUI subsystem binary prevents Task Scheduler and GUI
+// agents from allocating a persistent console window. The user-facing Core
+// remains a console binary so normal CLI output is unchanged.
+export function artifactLDFlags(baseLDFlags, target, artifact) {
+  const flags = [baseLDFlags];
+  if (
+    target.goos === "windows" &&
+    artifact.command === "./cmd/agentbell-bridge"
+  ) {
+    flags.push("-H=windowsgui");
+  }
+  return flags.filter(Boolean).join(" ");
+}
+
 function runBuild(goExecutable, options) {
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -112,7 +127,7 @@ async function main() {
     await runBuild(goExecutable, {
       artifact,
       core,
-      ldflags,
+      ldflags: artifactLDFlags(ldflags, target, artifact),
       output,
       target
     });

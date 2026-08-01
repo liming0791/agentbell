@@ -7,6 +7,7 @@ import {
   releaseTargets
 } from "../scripts/build-targets.mjs";
 import {
+  artifactLDFlags,
   buildConcurrency,
   runBounded
 } from "../scripts/build-core.mjs";
@@ -49,6 +50,21 @@ test("rejects unsupported release targets", () => {
     () => releaseArtifacts({ goos: "plan9", goarch: "amd64" }),
     /unsupported release target/i
   );
+});
+
+test("Windows stable bridge uses the GUI subsystem without changing Core", () => {
+  const base = "-s -w -X example.Version=test";
+  for (const target of releaseTargets) {
+    const [core, bridge] = releaseArtifacts(target);
+    const coreFlags = artifactLDFlags(base, target, core);
+    const bridgeFlags = artifactLDFlags(base, target, bridge);
+    assert.equal(coreFlags, base);
+    if (target.goos === "windows") {
+      assert.equal(bridgeFlags, `${base} -H=windowsgui`);
+    } else {
+      assert.equal(bridgeFlags, base);
+    }
+  }
 });
 
 test("release builds use deterministic bounded concurrency", async () => {
