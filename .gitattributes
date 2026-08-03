@@ -6,6 +6,7 @@
 *.mjs text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+*.go text eol=lf
 
 .editorconfig text eol=lf
 .gitattributes text eol=lf

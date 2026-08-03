@@ -919,14 +919,16 @@ async function defaultRestartService({ corePath }) {
 export function serviceTransitionAction({
   operation,
   active,
-  previousActive,
   compensation = false
 }) {
+  if (operation === "repair") {
+    return "install";
+  }
   if (operation === "upgrade") {
     if (compensation) {
       return active === null ? "install" : "restart";
     }
-    return previousActive === null ? "install" : "restart";
+    return "install";
   }
   return "restart";
 }
@@ -936,7 +938,7 @@ export async function runUpgradeServiceTransition(
   execute = runExecutable
 ) {
   const action = serviceTransitionAction({
-    operation: "upgrade",
+    operation: request.operation || "upgrade",
     active: request.active,
     previousActive: request.previousActive,
     compensation: request.compensation
@@ -1471,6 +1473,7 @@ async function compensateUpgrade({
   activeWritten,
   installedNew,
   corePath,
+  operation = "upgrade",
   restartService
 }) {
   const compensation = newCompensation();
@@ -1512,6 +1515,7 @@ async function compensateUpgrade({
   if (activeWritten && previousCorePath && activeRestored) {
     await attempt("restart-previous-service", async () => {
       await restartService({
+        operation,
         corePath: previousCorePath,
         bridgePath,
         active: restoredActive,
@@ -1633,6 +1637,7 @@ export async function upgrade({
   let bridgeChanged = false;
   let activeWritten = false;
   let attemptedGeneration = 0;
+  let repairingSameVersion = false;
   try {
     active = await loadActive(dataRoot, { optional: true });
     if (active && fromVersion !== undefined) {
@@ -1669,20 +1674,45 @@ export async function upgrade({
         platform,
         target
       );
-      return {
-        dryRun: false,
-        reused: true,
-        activeVersion: toVersion,
-        previousVersion: active.previousVersion || "",
-        generation: active.generation,
-        transactionId: active.transactionId,
-        corePath: installed.corePath,
-        bridgePath: stableBridgePath({ dataRoot, platform }),
-        rolledBack: false
-      };
+      if (installed.legacy ||
+          installed.metadata.checksum !== active.checksum ||
+          installed.metadata.bridgeChecksum !== active.bridgeChecksum) {
+        throw new Error(
+          `Active AgentBell version ${toVersion} conflicts with its install metadata.`
+        );
+      }
+      bridgePath = stableBridgePath({ dataRoot, platform });
+      await rejectSymlinkIfPresent(
+        path.dirname(bridgePath),
+        "stable bridge directory"
+      );
+      previousBridge = await readOptional(bridgePath);
+      if (previousBridge !== null &&
+          checksum(previousBridge) === active.bridgeChecksum) {
+        await restartService({
+          operation: "repair",
+          corePath: installed.corePath,
+          bridgePath,
+          active,
+          previousActive: active
+        });
+        return {
+          dryRun: false,
+          reused: true,
+          repaired: false,
+          activeVersion: toVersion,
+          previousVersion: active.previousVersion || "",
+          generation: active.generation,
+          transactionId: active.transactionId,
+          corePath: installed.corePath,
+          bridgePath,
+          rolledBack: false
+        };
+      }
+      repairingSameVersion = true;
     }
     transaction = newTransaction(
-      "upgrade",
+      repairingSameVersion ? "repair" : "upgrade",
       previousVersion,
       toVersion,
       target.id
@@ -1719,6 +1749,14 @@ export async function upgrade({
       fetchImpl
     });
     validateBundle(bundle, toVersion);
+    if (repairingSameVersion && (
+      bundle.coreChecksum !== active.checksum ||
+      bundle.bridgeChecksum !== active.bridgeChecksum
+    )) {
+      throw new Error(
+        `Release v${toVersion} conflicts with the active install checksums.`
+      );
+    }
     await writeJournal(dataRoot, transaction, "staging");
     installedNew = await installVersion({
       dataRoot,
@@ -1743,21 +1781,30 @@ export async function upgrade({
         ? 2
         : 1;
     attemptedGeneration = generation;
-    const nextActive = {
-      schemaVersion: activeSchemaVersion,
-      generation,
-      activeVersion: toVersion,
-      ...(previousVersion
-        ? { previousVersion }
-        : {}),
-      target: target.id,
-      checksum: bundle.coreChecksum,
-      bridgeChecksum: bundle.bridgeChecksum,
-      transactionId: transaction.id
-    };
+    const nextActive = repairingSameVersion
+      ? {
+          ...active,
+          generation,
+          checksum: bundle.coreChecksum,
+          bridgeChecksum: bundle.bridgeChecksum,
+          transactionId: transaction.id
+        }
+      : {
+          schemaVersion: activeSchemaVersion,
+          generation,
+          activeVersion: toVersion,
+          ...(previousVersion
+            ? { previousVersion }
+            : {}),
+          target: target.id,
+          checksum: bundle.coreChecksum,
+          bridgeChecksum: bundle.bridgeChecksum,
+          transactionId: transaction.id
+        };
     await writeActive(activeStatePath(dataRoot), nextActive);
     activeWritten = true;
     await restartService({
+      operation: repairingSameVersion ? "repair" : "upgrade",
       corePath,
       bridgePath,
       active: nextActive,
@@ -1767,8 +1814,11 @@ export async function upgrade({
     return {
       dryRun: false,
       reused: false,
+      repaired: repairingSameVersion,
       activeVersion: toVersion,
-      previousVersion,
+      previousVersion: repairingSameVersion
+        ? active.previousVersion || ""
+        : previousVersion,
       generation,
       transactionId: transaction.id,
       corePath,
@@ -1828,6 +1878,7 @@ export async function upgrade({
         activeWritten,
         installedNew,
         corePath,
+        operation: repairingSameVersion ? "repair" : "upgrade",
         restartService
       });
       transaction.compensation = result.compensation;

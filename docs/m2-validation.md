@@ -4,10 +4,10 @@
 
 | 项目 | 结论 |
 | --- | --- |
-| 记录日期 | 2026-08-01 |
+| 记录日期 | 2026-08-03 |
 | 本地实现 | P0～P6 自动化与本地门禁已实现 |
-| 发布状态 | `v0.3.0-rc.6` 已发布，仍为 Technical Preview / Pilot |
-| M2 退出结论 | **未通过**：RC6 发布完成；三平台完整矩阵和独立跨主机实机证据尚未完成 |
+| 发布状态 | `v0.3.0-rc.7` 已发布，仍为 Technical Preview / Pilot |
+| M2 退出结论 | **未通过**：RC7 发布完成；三平台完整矩阵和独立跨主机实机证据尚未完成 |
 
 本台账只记录可复现证据，不把 mock、交叉编译或自动 fixture 描述成实机通过。Adapter
 等级继续由 `docs/adapter-contract.md` 的产品实机矩阵决定。
@@ -26,7 +26,32 @@
 | M2-602 性能/压力 | stable bridge Hook p95、Relay/32 路 fan-out/queue benchmark、96 durable item stress gate | 本地通过 |
 | M2-603 跨平台 CI | 六目标 Core+bridge 构建、Go race、Node/Go、三平台 migration 与 Ubuntu TLS/HTTPS smoke workflow | 旧 13-job 基线由 Actions run 30352561499 证明；2026-07-30 分层 workflow 已完成本地验证，首次远程 run 待提交后补证 |
 | M2-604 实机矩阵 | 下表 | 未通过 |
-| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | RC6 沿用两阶段 workflow 发布；RC5 的 27 个 Release 资产、两个 npm 包、Trusted Publisher 和最终安装 smoke 已通过，历史 GitHub 账单拒绝启动的 job 使用下节记录的精确资产人工兜底 |
+| M2-605 Release | draft-before-npm、最终 Linux Core TLS smoke、上一 Release lifecycle smoke、checksum、插件 keyless、下载后复验 workflow | RC7 沿用两阶段 workflow 发布，并增加 Bridge/Service 安装自愈；RC5 的 27 个 Release 资产、两个 npm 包、Trusted Publisher 和最终安装 smoke 已通过，历史 GitHub 账单拒绝启动的 job 使用下节记录的精确资产人工兜底 |
+
+## 2026-08-03 RC7 Windows 安装自愈
+
+RC6 Windows 实机出现 `agentbell test` 可直发飞书，但 Codex 任务结束没有通知。只读诊断
+确认用户 Hook 仍指向 stable bridge，而 Bridge 文件与 `\AgentBell\AgentBell` 当前用户
+计划任务均缺失；队列保持为空，因此失败发生在事件入队之前。RC6 bootstrap 的同版本
+复用分支只校验 Core 安装元数据，不校验或恢复 Bridge，也不会重新对账 Service。
+
+RC7 的 bootstrap 修复包含：
+
+- 所有安装/升级幂等执行 `service install`，已存在的定义会更新并重启，缺失定义会重建；
+- 同版本重装校验 Core、install metadata、active state 与 stable bridge checksum；Bridge
+  缺失或损坏时，从同一不可变 Release 重新下载并验证 Core/Bridge checksum，原子恢复
+  Bridge、提升 generation 并写入 `repair` 事务；
+- Release 资产 checksum 与 active state 不一致时拒绝修复，Service 对账失败时恢复原 active
+  state 和 Bridge 字节；
+- Go app 测试统一隔离 `AGENTBELL_DATA_DIR`，避免测试读取真实用户安装；Windows runner
+  命令测试改用显式 `cmd.exe`，并补 DPAPI round-trip/无效密文测试及 volume-root Bridge
+  路径拒绝测试。
+
+本机 `npm run ci` exit `0`：108 项 Node 测试中 107 通过、1 项 Windows 权限相关跳过，
+Node 行覆盖率 76.47%；Go 总覆盖率 79.4%，Windows `installstate` 81.7%、`secretstore`
+83.5%，其余规定数据面包均通过覆盖率门槛；两个 RC7 npm pack 预检通过。真实公开 RC7
+安装、Codex 新任务 runtime proof 与手机最终到达仍需在 Release 发布后由 Windows 实机
+端到端验收，不能由自动测试替代。
 
 ## 2026-07-30 CI runner 使用优化
 

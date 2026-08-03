@@ -212,7 +212,15 @@ func TestManagedCorePathAndDataRootResolution(t *testing.T) {
 	for _, invalid := range []string{
 		filepath.Join(dataRoot, "bin", "bridge", "v2", "agentbell-bridge"),
 		filepath.Join(dataRoot, "bin", "agentbell-bridge"),
+		filepath.Join(dataRoot, "not-bin", "bridge", "v1", "agentbell-bridge"),
 		filepath.Join(dataRoot, "bin", "bridge", "v1", "unexpected"),
+		filepath.Join(
+			filepath.VolumeName(dataRoot)+string(filepath.Separator),
+			"bin",
+			"bridge",
+			"v1",
+			"agentbell-bridge",
+		),
 		"relative/bin/bridge/v1/agentbell-bridge",
 	} {
 		if _, err := DataRootFromBridgePath(invalid); err == nil {
@@ -224,6 +232,14 @@ func TestManagedCorePathAndDataRootResolution(t *testing.T) {
 	}
 	if _, err := ActiveStatePath(string(filepath.Separator)); err == nil {
 		t.Fatal("filesystem root accepted as data root")
+	}
+	invalidState := validState()
+	invalidState.PreviousVersion = invalidState.ActiveVersion
+	if _, err := ManagedCorePath(dataRoot, invalidState); err == nil {
+		t.Fatal("invalid active state accepted for managed Core path")
+	}
+	if _, err := ManagedCorePath("relative", validState()); err == nil {
+		t.Fatal("relative managed Core data root accepted")
 	}
 }
 

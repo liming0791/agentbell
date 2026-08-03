@@ -49,7 +49,7 @@ test("service transition installs bridge mode and restores legacy mode", () => {
       active: { activeVersion: "0.3.1" },
       previousActive: { activeVersion: "0.3.0" }
     }),
-    "restart"
+    "install"
   );
   assert.equal(
     serviceTransitionAction({
@@ -69,6 +69,14 @@ test("service transition installs bridge mode and restores legacy mode", () => {
   );
   assert.equal(
     serviceTransitionAction({
+      operation: "repair",
+      active: { activeVersion: "0.3.0-rc.1" },
+      previousActive: { activeVersion: "0.3.0-rc.1" }
+    }),
+    "install"
+  );
+  assert.equal(
+    serviceTransitionAction({
       operation: "rollback",
       active: { activeVersion: "0.3.0-rc.1" }
     }),
@@ -76,7 +84,7 @@ test("service transition installs bridge mode and restores legacy mode", () => {
   );
 });
 
-test("upgrade default service transition installs the stable bridge definition", async () => {
+test("upgrade default service transition reconciles the stable bridge definition", async () => {
   const calls = [];
   const execute = async (executable, args, stdio) => {
     calls.push({ executable, args, stdio });
@@ -92,6 +100,12 @@ test("upgrade default service transition installs the stable bridge definition",
     corePath,
     active: { activeVersion: "0.3.1" },
     previousActive: { activeVersion: "0.3.0" }
+  }, execute);
+  await runUpgradeServiceTransition({
+    operation: "repair",
+    corePath,
+    active: { activeVersion: "0.3.1" },
+    previousActive: { activeVersion: "0.3.1" }
   }, execute);
   await assert.rejects(runUpgradeServiceTransition({
     corePath,
@@ -109,7 +123,15 @@ test("upgrade default service transition installs the stable bridge definition",
     }
   }, {
     executable: corePath,
-    args: ["service", "restart", "--json"],
+    args: ["service", "install", "--json"],
+    stdio: {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "inherit"
+    }
+  }, {
+    executable: corePath,
+    args: ["service", "install", "--json"],
     stdio: {
       stdin: "ignore",
       stdout: "ignore",
@@ -799,6 +821,7 @@ test("default downloader rejects missing, inconsistent and failed assets", async
 test("upgrade reuses an active install and active resolution validates target", async (context) => {
   const dataRoot = await temporaryDataRoot(context);
   let downloads = 0;
+  const serviceOperations = [];
   const dependencies = {
     dataRoot,
     platform: "linux",
@@ -808,13 +831,17 @@ test("upgrade reuses an active install and active resolution validates target", 
       return releaseBundle(version);
     },
     smokeCore: async () => {},
-    restartService: async () => {}
+    restartService: async (request) => {
+      serviceOperations.push(request.operation || "upgrade");
+    }
   };
   const first = await upgrade({ ...dependencies, toVersion: "0.3.7" });
   const reused = await upgrade({ ...dependencies, toVersion: "0.3.7" });
   assert.equal(downloads, 1);
   assert.equal(reused.reused, true);
+  assert.equal(reused.repaired, false);
   assert.equal(reused.transactionId, first.transactionId);
+  assert.deepEqual(serviceOperations, ["upgrade", "repair"]);
 
   const active = await resolveActiveCore(dependencies);
   assert.equal(active.version, "0.3.7");
@@ -827,6 +854,132 @@ test("upgrade reuses an active install and active resolution validates target", 
     }),
     /does not match/
   );
+});
+
+test("same-version install repairs a missing or corrupt stable bridge", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const version = "0.3.7";
+  let downloads = 0;
+  const serviceOperations = [];
+  const dependencies = {
+    dataRoot,
+    platform: "linux",
+    architecture: "x64",
+    downloadBundle: async ({ version: requestedVersion }) => {
+      downloads++;
+      return releaseBundle(requestedVersion);
+    },
+    smokeCore: async () => {},
+    restartService: async (request) => {
+      serviceOperations.push(request.operation || "upgrade");
+    }
+  };
+  const first = await upgrade({ ...dependencies, toVersion: version });
+  const bridgePath = stableBridgePath({ dataRoot, platform: "linux" });
+
+  await rm(bridgePath);
+  const missingRepair = await upgrade({ ...dependencies, toVersion: version });
+  assert.equal(missingRepair.reused, false);
+  assert.equal(missingRepair.repaired, true);
+  assert.equal(missingRepair.generation, first.generation + 1);
+  assert.notEqual(missingRepair.transactionId, first.transactionId);
+  assert.deepEqual(
+    await readFile(bridgePath),
+    Buffer.from(`bridge-${version}`)
+  );
+
+  await writeFile(bridgePath, "corrupt-bridge");
+  const corruptRepair = await upgrade({ ...dependencies, toVersion: version });
+  assert.equal(corruptRepair.reused, false);
+  assert.equal(corruptRepair.repaired, true);
+  assert.equal(corruptRepair.generation, missingRepair.generation + 1);
+  assert.deepEqual(
+    await readFile(bridgePath),
+    Buffer.from(`bridge-${version}`)
+  );
+  assert.equal(downloads, 3);
+  assert.deepEqual(serviceOperations, ["upgrade", "repair", "repair"]);
+
+  const journals = await journalValues(dataRoot);
+  const repairs = journals.filter((journal) => journal.operation === "repair");
+  assert.equal(repairs.length, 2);
+  assert.ok(repairs.every((journal) => journal.status === "committed"));
+});
+
+test("same-version repair rejects release assets that changed in place", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const version = "0.3.7";
+  let download = 0;
+  const dependencies = {
+    dataRoot,
+    platform: "linux",
+    architecture: "x64",
+    downloadBundle: async ({ version: requestedVersion }) => {
+      download++;
+      const bundle = releaseBundle(requestedVersion);
+      if (download === 1) {
+        return bundle;
+      }
+      bundle.bridge = Buffer.from("mutated-release-bridge");
+      bundle.bridgeChecksum = sha256(bundle.bridge);
+      return bundle;
+    },
+    smokeCore: async () => {},
+    restartService: async () => {}
+  };
+  const first = await upgrade({ ...dependencies, toVersion: version });
+  const bridgePath = stableBridgePath({ dataRoot, platform: "linux" });
+  await rm(bridgePath);
+
+  await assert.rejects(
+    upgrade({ ...dependencies, toVersion: version }),
+    /conflicts with the active install checksums/
+  );
+  await assert.rejects(readFile(bridgePath), /ENOENT/);
+  const active = JSON.parse(await readFile(activeStatePath(dataRoot), "utf8"));
+  assert.equal(active.generation, first.generation);
+  assert.equal(active.transactionId, first.transactionId);
+});
+
+test("failed same-version repair restores active state and bridge bytes", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const version = "0.3.7";
+  const serviceOperations = [];
+  let failRepair = true;
+  const dependencies = {
+    dataRoot,
+    platform: "linux",
+    architecture: "x64",
+    downloadBundle: async ({ version: requestedVersion }) =>
+      releaseBundle(requestedVersion),
+    smokeCore: async () => {},
+    restartService: async (request) => {
+      const operation = request.operation || "upgrade";
+      serviceOperations.push(operation);
+      if (operation === "repair" && failRepair) {
+        failRepair = false;
+        throw new Error("simulated repair service failure");
+      }
+    }
+  };
+  const first = await upgrade({ ...dependencies, toVersion: version });
+  const bridgePath = stableBridgePath({ dataRoot, platform: "linux" });
+  const corruptBridge = Buffer.from("corrupt-bridge-before-repair");
+  await writeFile(bridgePath, corruptBridge);
+
+  await assert.rejects(
+    upgrade({ ...dependencies, toVersion: version }),
+    /simulated repair service failure/
+  );
+  assert.deepEqual(await readFile(bridgePath), corruptBridge);
+  const active = JSON.parse(await readFile(activeStatePath(dataRoot), "utf8"));
+  assert.equal(active.activeVersion, version);
+  assert.equal(active.generation, first.generation + 2);
+  assert.deepEqual(serviceOperations, ["upgrade", "repair", "repair"]);
+  const journals = await journalValues(dataRoot);
+  const repair = journals.find((journal) => journal.operation === "repair");
+  assert.equal(repair.status, "rolled-back");
+  assert.equal(repair.compensation.status, "completed");
 });
 
 test("rollback dry-run is read-only and service failure restores active state", async (context) => {

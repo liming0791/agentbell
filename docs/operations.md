@@ -1,6 +1,6 @@
 # AgentBell 安装与运维
 
-最新已发布版本是 `v0.3.0-rc.6` Technical Preview，包含原生 Core、持久队列、
+最新已发布版本是 `v0.3.0-rc.7` Technical Preview，包含原生 Core、持久队列、
 `agentbell setup`、`agentbell test`、Codex / Claude Code / Kimi Code / OpenCode /
 Qoder / QoderWork / TRAE Adapter、三平台登录自启动及当前 M2 命令面。所有 Adapter
 仍为 Pilot；GUI 安装器、正式代码签名和 M2 完整实机矩阵仍属于后续发布阶段。
@@ -11,17 +11,21 @@ Qoder / QoderWork / TRAE Adapter、三平台登录自启动及当前 M2 命令�
 Publisher。PowerShell：
 
 ```powershell
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.6
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.7
 ```
 
 macOS/Linux：
 
 ```bash
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.6
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.7
 ```
 
 bootstrap 先下载 `checksums.txt`，校验 SHA-256 后才把
 Core 移入版本目录；校验失败的文件不会执行。
+安装和升级会幂等执行 `service install`，对账并重建缺失的三平台用户服务。同版本
+重装还会同时校验已安装 Core、stable bridge 与 active state：Bridge 缺失或校验失败
+时只接受同一不可变 Release 中与 active checksum 完全一致的资产，原子恢复 Bridge、
+提升 generation 并记录 `repair` 事务；完整性正常时不重复下载，但仍会对账 Service。
 公开仓库使用标准 Release 下载路径；私有 fork 可通过 `AGENTBELL_GITHUB_TOKEN` 提供
 只读 token，`AGENTBELL_RELEASE_BASE_URL` 可指向受控测试镜像。
 
@@ -132,7 +136,7 @@ agentbell test --channel team --json
 
 ## M2 Technical Preview 命令
 
-RC6 可以在隔离数据目录中使用本机设置、一次性绑定和 stable bridge：
+RC7 可以在隔离数据目录中使用本机设置、一次性绑定和 stable bridge：
 
 ```text
 agentbell settings show --effective --json

@@ -356,7 +356,7 @@ func DataRootFromBridgePath(executable string) (string, error) {
 		return "", errors.New("bridge executable is not in a managed bin directory")
 	}
 	dataRoot := filepath.Dir(binDirectory)
-	if dataRoot == binDirectory || dataRoot == string(filepath.Separator) || dataRoot == "." {
+	if dataRoot == binDirectory || filepath.Dir(dataRoot) == dataRoot || dataRoot == "." {
 		return "", errors.New("bridge executable has no managed data root")
 	}
 	return dataRoot, nil
