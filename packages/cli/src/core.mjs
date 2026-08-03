@@ -16,7 +16,8 @@ import { URL } from "node:url";
 import { resolveDataRoot, resolveTarget } from "./platform.mjs";
 import {
   activeStatePath,
-  stableBridgePath
+  stableBridgePath,
+  stableServiceBridgePath
 } from "./upgrade.mjs";
 import { fetchGitHubReleaseMetadata } from "./github-release.mjs";
 
@@ -310,6 +311,7 @@ export async function uninstallCore({
   if (removeActiveRuntime) {
     await rm(activePath, { force: true });
     await rm(stableBridgePath({ dataRoot: root, platform }), { force: true });
+    await rm(stableServiceBridgePath({ dataRoot: root, platform }), { force: true });
   }
   return {
     path: installPath,

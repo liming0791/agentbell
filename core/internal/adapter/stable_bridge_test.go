@@ -1,11 +1,13 @@
 package adapter
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 func testBridgePath(t *testing.T) string {
@@ -34,12 +36,14 @@ func TestStableBridgeCommandsDoNotContainVersionedCore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, value := range []string{command, commandWindows} {
-			if strings.Contains(value, core) ||
-				!strings.Contains(value, adapterValue.BridgeExecutable) ||
-				!strings.Contains(value, " hook-v1 --adapter codex ") {
-				t.Fatalf("unexpected stable Codex command: %q", value)
-			}
+		if strings.Contains(command, core) ||
+			!strings.Contains(command, adapterValue.BridgeExecutable) ||
+			!strings.Contains(command, " hook-v1 --adapter codex ") {
+			t.Fatalf("unexpected stable Codex command: %q", command)
+		}
+		if strings.Contains(commandWindows, core) ||
+			!strings.HasPrefix(commandWindows, "powershell.exe ") {
+			t.Fatalf("unexpected stable Codex Windows command: %q", commandWindows)
 		}
 	})
 
@@ -75,6 +79,41 @@ func TestStableBridgeCommandsDoNotContainVersionedCore(t *testing.T) {
 			t.Fatalf("unexpected stable Kimi command: %q", command)
 		}
 	})
+}
+
+func TestCodexWindowsCommandAvoidsLeadingQuoteAndSupportsSpaces(t *testing.T) {
+	invocation := hookInvocation{
+		Executable: `C:\AgentBell\bin\agentbell-bridge.exe`,
+		Args:       []string{"hook-v1", "--adapter", "codex"},
+	}
+	fast := codexWindowsCommand(invocation)
+	if strings.HasPrefix(fast, `"`) ||
+		fast != `C:\AgentBell\bin\agentbell-bridge.exe hook-v1 --adapter codex` {
+		t.Fatalf("unsafe fast Codex command: %q", fast)
+	}
+
+	invocation.Executable = `C:\Agent Bell\bin\agentbell-bridge.exe`
+	fallback := codexWindowsCommand(invocation)
+	const prefix = "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand "
+	if !strings.HasPrefix(fallback, prefix) || strings.Contains(fallback, `"`) {
+		t.Fatalf("unsafe fallback Codex command: %q", fallback)
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(fallback, prefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw)%2 != 0 {
+		t.Fatalf("encoded PowerShell command has odd byte length: %d", len(raw))
+	}
+	units := make([]uint16, len(raw)/2)
+	for index := range units {
+		units[index] = uint16(raw[index*2]) | uint16(raw[index*2+1])<<8
+	}
+	script := string(utf16.Decode(units))
+	if !strings.Contains(script, `'C:\Agent Bell\bin\agentbell-bridge.exe'`) ||
+		!strings.HasSuffix(script, " hook-v1 --adapter codex") {
+		t.Fatalf("unexpected encoded PowerShell command: %q", script)
+	}
 }
 
 func TestStableBridgeRequiresAbsolutePathAndActiveGeneration(t *testing.T) {

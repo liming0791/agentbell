@@ -22,7 +22,10 @@ export function resolveTarget(platform = process.platform, architecture = proces
     ...target,
     id,
     fileName: `agentbell-${id}${target.extension}`,
-    bridgeFileName: `agentbell-bridge-${id}${target.extension}`
+    bridgeFileName: `agentbell-bridge-${id}${target.extension}`,
+    ...(platform === "win32"
+      ? { serviceBridgeFileName: `agentbell-service-${id}${target.extension}` }
+      : {})
   };
 }
 

@@ -66,6 +66,10 @@ test("resolves all supported release targets", () => {
     windows.bridgeFileName,
     "agentbell-bridge-windows-amd64.exe"
   );
+  assert.equal(
+    windows.serviceBridgeFileName,
+    "agentbell-service-windows-amd64.exe"
+  );
   const darwin = resolveTarget("darwin", "arm64");
   assert.equal(darwin.fileName, "agentbell-darwin-arm64");
   assert.equal(

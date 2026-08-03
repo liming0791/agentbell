@@ -239,6 +239,25 @@ func TestServiceRestartUsesStableBridgeRuntime(t *testing.T) {
 
 func TestBridgeDoctorReportsValidatedActiveRuntime(t *testing.T) {
 	resolved, corePath, bridgePath, state := activeRuntimeFixture(t)
+	serviceBridgeFields := ""
+	expectedServiceBridgePath := ""
+	if runtime.GOOS == "windows" {
+		serviceBridgeBytes := []byte("stable service bridge")
+		state.ServiceBridgeChecksum = installstate.SHA256(serviceBridgeBytes)
+		expectedServiceBridgePath = filepath.Join(
+			resolved.DataDir,
+			"bin",
+			"bridge",
+			"v1",
+			"agentbell-service.exe",
+		)
+		if err := os.WriteFile(expectedServiceBridgePath, serviceBridgeBytes, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		serviceBridgeFields = `,
+	  "serviceBridgeFileName": "agentbell-service-windows-amd64.exe",
+	  "serviceBridgeChecksum": "` + state.ServiceBridgeChecksum + `"`
+	}
 	serviceBytes := []byte("pinned service AgentBell Core")
 	state.ServiceVersion = "0.3.1"
 	state.ServiceChecksum = installstate.SHA256(serviceBytes)
@@ -276,7 +295,7 @@ func TestBridgeDoctorReportsValidatedActiveRuntime(t *testing.T) {
 	  "version": "0.3.0",
 	  "target": "` + state.Target + `",
 	  "checksum": "` + state.Checksum + `",
-	  "bridgeChecksum": "` + installstate.SHA256([]byte("stable bridge")) + `",
+	  "bridgeChecksum": "` + installstate.SHA256([]byte("stable bridge")) + `"` + serviceBridgeFields + `,
 	  "signatureStatus": "technical-preview",
 	  "transactionId": "tx-app-wiring"
 	}`
@@ -321,6 +340,7 @@ func TestBridgeDoctorReportsValidatedActiveRuntime(t *testing.T) {
 		result.CorePath != corePath ||
 		result.ServiceCorePath != serviceCorePath ||
 		result.BridgePath != bridgePath ||
+		result.ServiceBridgePath != expectedServiceBridgePath ||
 		result.Version != state.ActiveVersion ||
 		result.ServiceVersion != state.ServiceVersion ||
 		result.Generation != state.Generation ||

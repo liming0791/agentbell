@@ -530,6 +530,10 @@ function bridgeName(platform) {
   return platform === "win32" ? "agentbell-bridge.exe" : "agentbell-bridge";
 }
 
+function serviceBridgeName(platform) {
+  return platform === "win32" ? "agentbell-service.exe" : bridgeName(platform);
+}
+
 export function activeStatePath(dataRoot) {
   return path.join(assertManagedRoot(dataRoot), "bin", "active.json");
 }
@@ -544,6 +548,19 @@ export function stableBridgePath({
     "bridge",
     bridgeProtocolVersion,
     bridgeName(platform)
+  );
+}
+
+export function stableServiceBridgePath({
+  dataRoot,
+  platform = process.platform
+}) {
+  return path.join(
+    assertManagedRoot(dataRoot),
+    "bin",
+    "bridge",
+    bridgeProtocolVersion,
+    serviceBridgeName(platform)
   );
 }
 
@@ -666,6 +683,7 @@ function validateActiveState(value) {
     "checksum",
     "serviceChecksum",
     "bridgeChecksum",
+    "serviceBridgeChecksum",
     "transactionId"
   ]);
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -691,6 +709,8 @@ function validateActiveState(value) {
       typeof value.target !== "string" ||
       !checksumPattern.test(value.checksum) ||
       !checksumPattern.test(value.bridgeChecksum) ||
+      (value.serviceBridgeChecksum !== undefined &&
+        !checksumPattern.test(value.serviceBridgeChecksum)) ||
       typeof value.transactionId !== "string" ||
       value.transactionId.length === 0) {
     throw new Error("Invalid AgentBell active state.");
@@ -802,7 +822,8 @@ async function defaultDownloadBundle({
     "checksums.txt",
     "release-manifest.json",
     target.fileName,
-    target.bridgeFileName
+    target.bridgeFileName,
+    ...(target.serviceBridgeFileName ? [target.serviceBridgeFileName] : [])
   ];
   let urls;
   const repositoryAPI = token ? githubReleaseAPI(releaseBase) : null;
@@ -864,17 +885,26 @@ async function defaultDownloadBundle({
     );
     return Buffer.from(await response.arrayBuffer());
   };
+  const core = await download(target.fileName);
+  const bridge = await download(target.bridgeFileName);
+  const serviceBridge = target.serviceBridgeFileName
+    ? await download(target.serviceBridgeFileName)
+    : null;
   return {
-    core: await download(target.fileName),
-    bridge: await download(target.bridgeFileName),
+    core,
+    bridge,
+    ...(serviceBridge ? { serviceBridge } : {}),
     coreChecksum: checksums.get(target.fileName),
     bridgeChecksum: checksums.get(target.bridgeFileName),
+    ...(target.serviceBridgeFileName
+      ? { serviceBridgeChecksum: checksums.get(target.serviceBridgeFileName) }
+      : {}),
     signatureStatus: manifest.signatureStatus,
     manifest
   };
 }
 
-function validateBundle(bundle, version) {
+function validateBundle(bundle, version, target) {
   if (!bundle || !Buffer.isBuffer(bundle.core) ||
       !Buffer.isBuffer(bundle.bridge)) {
     throw new Error("Release bundle must contain Core and bridge bytes.");
@@ -886,6 +916,13 @@ function validateBundle(bundle, version) {
   if (!checksumPattern.test(bundle.bridgeChecksum || "") ||
       checksum(bundle.bridge) !== bundle.bridgeChecksum) {
     throw new Error("Bridge SHA-256 mismatch.");
+  }
+  if (target.serviceBridgeFileName && (
+    !Buffer.isBuffer(bundle.serviceBridge) ||
+    !checksumPattern.test(bundle.serviceBridgeChecksum || "") ||
+    checksum(bundle.serviceBridge) !== bundle.serviceBridgeChecksum
+  )) {
+    throw new Error("Service bridge SHA-256 mismatch.");
   }
   if (bundle.signatureStatus !== "technical-preview" ||
       bundle.manifest?.schemaVersion !== 1 ||
@@ -1312,6 +1349,12 @@ async function installVersion({
     checksum: bundle.coreChecksum,
     bridgeFileName: target.bridgeFileName,
     bridgeChecksum: bundle.bridgeChecksum,
+    ...(target.serviceBridgeFileName
+      ? {
+          serviceBridgeFileName: target.serviceBridgeFileName,
+          serviceBridgeChecksum: bundle.serviceBridgeChecksum
+        }
+      : {}),
     installedAt: new Date().toISOString(),
     signatureStatus: bundle.signatureStatus,
     transactionId: transaction.id
@@ -1348,6 +1391,8 @@ async function installedMetadata(dataRoot, version, platform, target) {
           "checksum",
           "bridgeFileName",
           "bridgeChecksum",
+          "serviceBridgeFileName",
+          "serviceBridgeChecksum",
           "installedAt",
           "signatureStatus",
           "transactionId"
@@ -1369,6 +1414,16 @@ async function installedMetadata(dataRoot, version, platform, target) {
   if (!legacy && (
     metadata.bridgeFileName !== target.bridgeFileName ||
     !checksumPattern.test(metadata.bridgeChecksum || "") ||
+    ((metadata.serviceBridgeFileName === undefined) !==
+      (metadata.serviceBridgeChecksum === undefined)) ||
+    (metadata.serviceBridgeFileName !== undefined && (
+      metadata.serviceBridgeFileName !== target.serviceBridgeFileName ||
+      !checksumPattern.test(metadata.serviceBridgeChecksum || "")
+    )) ||
+    (!target.serviceBridgeFileName && (
+      metadata.serviceBridgeFileName !== undefined ||
+      metadata.serviceBridgeChecksum !== undefined
+    )) ||
     typeof metadata.transactionId !== "string" ||
     metadata.transactionId.length === 0
   )) {
@@ -1470,6 +1525,9 @@ async function compensateUpgrade({
   bridgePath,
   previousBridge,
   bridgeChanged,
+  serviceBridgePath,
+  previousServiceBridge,
+  serviceBridgeChanged,
   activeWritten,
   installedNew,
   corePath,
@@ -1493,6 +1551,15 @@ async function compensateUpgrade({
         await rm(bridgePath, { force: true });
       } else {
         await atomicWrite(bridgePath, previousBridge, 0o700);
+      }
+    });
+  }
+  if (serviceBridgeChanged) {
+    await attempt("restore-service-bridge", async () => {
+      if (previousServiceBridge === null) {
+        await rm(serviceBridgePath, { force: true });
+      } else {
+        await atomicWrite(serviceBridgePath, previousServiceBridge, 0o700);
       }
     });
   }
@@ -1635,6 +1702,9 @@ export async function upgrade({
   let bridgePath = "";
   let previousBridge = null;
   let bridgeChanged = false;
+  let serviceBridgePath = "";
+  let previousServiceBridge = null;
+  let serviceBridgeChanged = false;
   let activeWritten = false;
   let attemptedGeneration = 0;
   let repairingSameVersion = false;
@@ -1676,7 +1746,8 @@ export async function upgrade({
       );
       if (installed.legacy ||
           installed.metadata.checksum !== active.checksum ||
-          installed.metadata.bridgeChecksum !== active.bridgeChecksum) {
+          installed.metadata.bridgeChecksum !== active.bridgeChecksum ||
+          installed.metadata.serviceBridgeChecksum !== active.serviceBridgeChecksum) {
         throw new Error(
           `Active AgentBell version ${toVersion} conflicts with its install metadata.`
         );
@@ -1687,8 +1758,17 @@ export async function upgrade({
         "stable bridge directory"
       );
       previousBridge = await readOptional(bridgePath);
+      serviceBridgePath = stableServiceBridgePath({ dataRoot, platform });
+      previousServiceBridge = target.serviceBridgeFileName
+        ? await readOptional(serviceBridgePath)
+        : previousBridge;
+      const serviceBridgeReady = !target.serviceBridgeFileName || (
+        previousServiceBridge !== null &&
+        checksum(previousServiceBridge) === active.serviceBridgeChecksum
+      );
       if (previousBridge !== null &&
-          checksum(previousBridge) === active.bridgeChecksum) {
+          checksum(previousBridge) === active.bridgeChecksum &&
+          serviceBridgeReady) {
         await restartService({
           operation: "repair",
           corePath: installed.corePath,
@@ -1748,10 +1828,11 @@ export async function upgrade({
       token,
       fetchImpl
     });
-    validateBundle(bundle, toVersion);
+    validateBundle(bundle, toVersion, target);
     if (repairingSameVersion && (
       bundle.coreChecksum !== active.checksum ||
-      bundle.bridgeChecksum !== active.bridgeChecksum
+      bundle.bridgeChecksum !== active.bridgeChecksum ||
+      bundle.serviceBridgeChecksum !== active.serviceBridgeChecksum
     )) {
       throw new Error(
         `Release v${toVersion} conflicts with the active install checksums.`
@@ -1772,9 +1853,17 @@ export async function upgrade({
     bridgePath = stableBridgePath({ dataRoot, platform });
     await rejectSymlinkIfPresent(path.dirname(bridgePath), "stable bridge directory");
     previousBridge = await readOptional(bridgePath);
+    serviceBridgePath = stableServiceBridgePath({ dataRoot, platform });
+    previousServiceBridge = target.serviceBridgeFileName
+      ? await readOptional(serviceBridgePath)
+      : previousBridge;
     await writeJournal(dataRoot, transaction, "activating");
     await atomicWrite(bridgePath, bundle.bridge, 0o700);
     bridgeChanged = true;
+    if (target.serviceBridgeFileName) {
+      await atomicWrite(serviceBridgePath, bundle.serviceBridge, 0o700);
+      serviceBridgeChanged = true;
+    }
     const generation = active
       ? active.generation + 1
       : legacyInstall
@@ -1787,6 +1876,9 @@ export async function upgrade({
           generation,
           checksum: bundle.coreChecksum,
           bridgeChecksum: bundle.bridgeChecksum,
+          ...(bundle.serviceBridgeChecksum
+            ? { serviceBridgeChecksum: bundle.serviceBridgeChecksum }
+            : {}),
           transactionId: transaction.id
         }
       : {
@@ -1799,6 +1891,9 @@ export async function upgrade({
           target: target.id,
           checksum: bundle.coreChecksum,
           bridgeChecksum: bundle.bridgeChecksum,
+          ...(bundle.serviceBridgeChecksum
+            ? { serviceBridgeChecksum: bundle.serviceBridgeChecksum }
+            : {}),
           transactionId: transaction.id
         };
     await writeActive(activeStatePath(dataRoot), nextActive);
@@ -1865,7 +1960,9 @@ export async function upgrade({
       }
     }
     let compensationErrors = [];
-    if (transaction && (bridgeChanged || activeWritten || installedNew)) {
+    if (transaction && (
+      bridgeChanged || serviceBridgeChanged || activeWritten || installedNew
+    )) {
       const result = await compensateUpgrade({
         dataRoot,
         previousActive: active,
@@ -1875,6 +1972,9 @@ export async function upgrade({
         bridgePath,
         previousBridge,
         bridgeChanged,
+        serviceBridgePath,
+        previousServiceBridge,
+        serviceBridgeChanged,
         activeWritten,
         installedNew,
         corePath,
@@ -1893,7 +1993,7 @@ export async function upgrade({
       await writeJournal(
         dataRoot,
         transaction,
-        bridgeChanged || activeWritten
+        bridgeChanged || serviceBridgeChanged || activeWritten
           ? compensationErrors.length === 0
             ? "rolled-back"
             : "compensation-failed"
@@ -2074,6 +2174,9 @@ export async function rollback({
       target: target.id,
       checksum: installed.metadata.checksum,
       bridgeChecksum: current.bridgeChecksum,
+      ...(current.serviceBridgeChecksum
+        ? { serviceBridgeChecksum: current.serviceBridgeChecksum }
+        : {}),
       transactionId: transaction.id
     };
     await writeJournal(dataRoot, transaction, "activating");

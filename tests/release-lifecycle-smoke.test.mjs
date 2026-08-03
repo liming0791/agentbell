@@ -69,6 +69,7 @@ test("release lifecycle smoke upgrades, preserves hooks and rolls back", async (
   const previousCore = Buffer.from("previous-core");
   const currentCore = Buffer.from("current-core");
   const currentBridge = Buffer.from("current-bridge");
+  const currentServiceBridge = Buffer.from("current-service-bridge");
   const restarts = [];
   const phases = [];
   const doctorPhases = [];
@@ -82,8 +83,14 @@ test("release lifecycle smoke upgrades, preserves hooks and rolls back", async (
     currentBundle: {
       core: currentCore,
       bridge: currentBridge,
+      ...(target.serviceBridgeFileName
+        ? { serviceBridge: currentServiceBridge }
+        : {}),
       coreChecksum: sha256(currentCore),
       bridgeChecksum: sha256(currentBridge),
+      ...(target.serviceBridgeFileName
+        ? { serviceBridgeChecksum: sha256(currentServiceBridge) }
+        : {}),
       signatureStatus: "technical-preview",
       manifest: {
         schemaVersion: 1,
@@ -179,6 +186,7 @@ test("release lifecycle smoke verifies a real previous bootstrap install", async
   const previousCore = Buffer.from("previous-release-core");
   const currentCore = Buffer.from("current-draft-core");
   const currentBridge = Buffer.from("current-draft-bridge");
+  const currentServiceBridge = Buffer.from("current-draft-service-bridge");
   const previousDirectory = path.join(dataRoot, "bin", previousVersion);
   const previousPath = path.join(
     previousDirectory,
@@ -207,8 +215,14 @@ test("release lifecycle smoke verifies a real previous bootstrap install", async
     currentBundle: {
       core: currentCore,
       bridge: currentBridge,
+      ...(target.serviceBridgeFileName
+        ? { serviceBridge: currentServiceBridge }
+        : {}),
       coreChecksum: sha256(currentCore),
       bridgeChecksum: sha256(currentBridge),
+      ...(target.serviceBridgeFileName
+        ? { serviceBridgeChecksum: sha256(currentServiceBridge) }
+        : {}),
       signatureStatus: "technical-preview",
       manifest: {
         schemaVersion: 1,

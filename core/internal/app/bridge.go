@@ -18,31 +18,34 @@ import (
 const maxInstallMetadataSize = 64 * 1024
 
 type bridgeDoctorReport struct {
-	Healthy         bool   `json:"healthy"`
-	Mode            string `json:"mode"`
-	DataRoot        string `json:"dataRoot"`
-	ActiveStatePath string `json:"activeStatePath"`
-	CorePath        string `json:"corePath"`
-	ServiceCorePath string `json:"serviceCorePath,omitempty"`
-	BridgePath      string `json:"bridgePath,omitempty"`
-	Version         string `json:"version,omitempty"`
-	ServiceVersion  string `json:"serviceVersion,omitempty"`
-	Generation      uint64 `json:"generation,omitempty"`
-	Target          string `json:"target,omitempty"`
-	SignatureStatus string `json:"signatureStatus"`
+	Healthy           bool   `json:"healthy"`
+	Mode              string `json:"mode"`
+	DataRoot          string `json:"dataRoot"`
+	ActiveStatePath   string `json:"activeStatePath"`
+	CorePath          string `json:"corePath"`
+	ServiceCorePath   string `json:"serviceCorePath,omitempty"`
+	BridgePath        string `json:"bridgePath,omitempty"`
+	ServiceBridgePath string `json:"serviceBridgePath,omitempty"`
+	Version           string `json:"version,omitempty"`
+	ServiceVersion    string `json:"serviceVersion,omitempty"`
+	Generation        uint64 `json:"generation,omitempty"`
+	Target            string `json:"target,omitempty"`
+	SignatureStatus   string `json:"signatureStatus"`
 }
 
 type installMetadata struct {
-	SchemaVersion   int    `json:"schemaVersion"`
-	Version         string `json:"version"`
-	Target          string `json:"target"`
-	FileName        string `json:"fileName,omitempty"`
-	Checksum        string `json:"checksum"`
-	BridgeFileName  string `json:"bridgeFileName,omitempty"`
-	BridgeChecksum  string `json:"bridgeChecksum"`
-	InstalledAt     string `json:"installedAt,omitempty"`
-	SignatureStatus string `json:"signatureStatus"`
-	TransactionID   string `json:"transactionId"`
+	SchemaVersion         int    `json:"schemaVersion"`
+	Version               string `json:"version"`
+	Target                string `json:"target"`
+	FileName              string `json:"fileName,omitempty"`
+	Checksum              string `json:"checksum"`
+	BridgeFileName        string `json:"bridgeFileName,omitempty"`
+	BridgeChecksum        string `json:"bridgeChecksum"`
+	ServiceBridgeFileName string `json:"serviceBridgeFileName,omitempty"`
+	ServiceBridgeChecksum string `json:"serviceBridgeChecksum,omitempty"`
+	InstalledAt           string `json:"installedAt,omitempty"`
+	SignatureStatus       string `json:"signatureStatus"`
+	TransactionID         string `json:"transactionId"`
 }
 
 func runBridge(args []string, stdout io.Writer) error {
@@ -79,6 +82,9 @@ func runBridge(args []string, stdout io.Writer) error {
 	)
 	if report.BridgePath != "" {
 		fmt.Fprintf(stdout, "Bridge: %s\n", report.BridgePath)
+	}
+	if report.ServiceBridgePath != "" {
+		fmt.Fprintf(stdout, "Service bridge: %s\n", report.ServiceBridgePath)
 	}
 	if report.ServiceCorePath != "" {
 		fmt.Fprintf(
@@ -150,6 +156,24 @@ func inspectBridgeRuntime(resolved paths.Paths) (bridgeDoctorReport, error) {
 			"stable AgentBell bridge checksum does not match active state",
 		)
 	}
+	serviceBridgePath := ""
+	if active.ServiceBridgeChecksum != "" {
+		if metadata.ServiceBridgeChecksum != active.ServiceBridgeChecksum {
+			return bridgeDoctorReport{}, errors.New(
+				"service bridge install metadata does not match active state",
+			)
+		}
+		serviceBridgeBytes, readErr := os.ReadFile(selected.ServiceBridgeExecutable)
+		if readErr != nil {
+			return bridgeDoctorReport{}, readErr
+		}
+		if installstate.SHA256(serviceBridgeBytes) != active.ServiceBridgeChecksum {
+			return bridgeDoctorReport{}, errors.New(
+				"stable AgentBell service bridge checksum does not match active state",
+			)
+		}
+		serviceBridgePath = selected.ServiceBridgeExecutable
+	}
 	serviceCorePath := ""
 	if active.ServiceVersion != "" {
 		serviceState := active
@@ -187,18 +211,19 @@ func inspectBridgeRuntime(resolved paths.Paths) (bridgeDoctorReport, error) {
 		}
 	}
 	return bridgeDoctorReport{
-		Healthy:         true,
-		Mode:            "active",
-		DataRoot:        resolved.DataDir,
-		ActiveStatePath: activePath,
-		CorePath:        selected.CoreExecutable,
-		ServiceCorePath: serviceCorePath,
-		BridgePath:      selected.BridgeExecutable,
-		Version:         active.ActiveVersion,
-		ServiceVersion:  active.ServiceVersion,
-		Generation:      active.Generation,
-		Target:          active.Target,
-		SignatureStatus: metadata.SignatureStatus,
+		Healthy:           true,
+		Mode:              "active",
+		DataRoot:          resolved.DataDir,
+		ActiveStatePath:   activePath,
+		CorePath:          selected.CoreExecutable,
+		ServiceCorePath:   serviceCorePath,
+		BridgePath:        selected.BridgeExecutable,
+		ServiceBridgePath: serviceBridgePath,
+		Version:           active.ActiveVersion,
+		ServiceVersion:    active.ServiceVersion,
+		Generation:        active.Generation,
+		Target:            active.Target,
+		SignatureStatus:   metadata.SignatureStatus,
 	}, nil
 }
 

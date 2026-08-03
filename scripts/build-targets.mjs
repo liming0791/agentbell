@@ -16,14 +16,24 @@ export function releaseArtifacts({ goos, goarch }) {
     throw new Error(`Unsupported release target: ${goos}/${goarch}.`);
   }
   const extension = goos === "windows" ? ".exe" : "";
-  return [
+  const artifacts = [
     {
       command: "./cmd/agentbell",
-      fileName: `agentbell-${goos}-${goarch}${extension}`
+      fileName: `agentbell-${goos}-${goarch}${extension}`,
+      role: "core"
     },
     {
       command: "./cmd/agentbell-bridge",
-      fileName: `agentbell-bridge-${goos}-${goarch}${extension}`
+      fileName: `agentbell-bridge-${goos}-${goarch}${extension}`,
+      role: "hook"
     }
   ];
+  if (goos === "windows") {
+    artifacts.push({
+      command: "./cmd/agentbell-bridge",
+      fileName: `agentbell-service-${goos}-${goarch}${extension}`,
+      role: "service"
+    });
+  }
+  return artifacts;
 }

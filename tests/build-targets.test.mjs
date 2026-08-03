@@ -12,20 +12,20 @@ import {
   runBounded
 } from "../scripts/build-core.mjs";
 
-test("defines six Core and bridge release targets", () => {
+test("defines six Core and bridge targets plus Windows service entries", () => {
   assert.equal(releaseTargets.length, 6);
   const artifacts = releaseTargets.flatMap((target) =>
     releaseArtifacts(target)
   );
-  assert.equal(artifacts.length, 12);
-  assert.equal(new Set(artifacts.map((artifact) => artifact.fileName)).size, 12);
+  assert.equal(artifacts.length, 14);
+  assert.equal(new Set(artifacts.map((artifact) => artifact.fileName)).size, 14);
 
   for (const target of releaseTargets) {
     const targetArtifacts = releaseArtifacts(target);
-    assert.deepEqual(
-      targetArtifacts.map((artifact) => artifact.command),
-      ["./cmd/agentbell", "./cmd/agentbell-bridge"]
-    );
+    assert.deepEqual(targetArtifacts.map((artifact) => artifact.command),
+      target.goos === "windows"
+        ? ["./cmd/agentbell", "./cmd/agentbell-bridge", "./cmd/agentbell-bridge"]
+        : ["./cmd/agentbell", "./cmd/agentbell-bridge"]);
     assert.ok(
       targetArtifacts[0].fileName.startsWith(
         `agentbell-${target.goos}-${target.goarch}`
@@ -36,6 +36,13 @@ test("defines six Core and bridge release targets", () => {
         `agentbell-bridge-${target.goos}-${target.goarch}`
       )
     );
+    if (target.goos === "windows") {
+      assert.ok(
+        targetArtifacts[2].fileName.startsWith(
+          `agentbell-service-${target.goos}-${target.goarch}`
+        )
+      );
+    }
     const expectedExtension = target.goos === "windows" ? ".exe" : "";
     assert.ok(
       targetArtifacts.every((artifact) =>
@@ -52,17 +59,16 @@ test("rejects unsupported release targets", () => {
   );
 });
 
-test("Windows stable bridge uses the GUI subsystem without changing Core", () => {
+test("only the Windows service entry uses the GUI subsystem", () => {
   const base = "-s -w -X example.Version=test";
   for (const target of releaseTargets) {
-    const [core, bridge] = releaseArtifacts(target);
+    const [core, bridge, service] = releaseArtifacts(target);
     const coreFlags = artifactLDFlags(base, target, core);
     const bridgeFlags = artifactLDFlags(base, target, bridge);
     assert.equal(coreFlags, base);
+    assert.equal(bridgeFlags, base);
     if (target.goos === "windows") {
-      assert.equal(bridgeFlags, `${base} -H=windowsgui`);
-    } else {
-      assert.equal(bridgeFlags, base);
+      assert.equal(artifactLDFlags(base, target, service), `${base} -H=windowsgui`);
     }
   }
 });
