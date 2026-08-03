@@ -71,7 +71,7 @@ Claude Code 和 Windows/Linux 服务管理当前通过自动 fixture、Go 测试
 
 ## M2：大众产品体验与远程环境
 
-- 状态：In progress；`v0.3.0-rc.6` Technical Preview 已发布。settings/policy、
+- 状态：In progress；`v0.3.0-rc.7` Technical Preview 已发布。settings/policy、
   binding、Channel 事务、stable Hook/Service
   bridge、Hook 审计、受 sidecar/部分投递账本保护的 upgrade/rollback、`plugin verify`
   与 Release keyless 插件签名均已进入工作树。Relay 已有一次性配对、设备密钥后端、
@@ -80,8 +80,9 @@ Claude Code 和 Windows/Linux 服务管理当前通过自动 fixture、Go 测试
   本地 migration/lifecycle/压力 smoke、macOS Host→Linux container stdio E2E、
   隔离 Linux container TLS/HTTPS E2E、macOS 真实 LaunchAgent 备份迁移与后台飞书
   投递、真实上一 Release → Draft → rollback → uninstall，以及跨平台 workflow
-  已接通；RC6 另修复 setup/test 收件人可达性和 Windows 后台服务常驻黑窗；macOS
-  断网恢复、Windows/Linux 完整实机和独立跨主机证据仍未完成，因此 RC6
+  已接通；RC6 另修复 setup/test 收件人可达性和 Windows 后台服务常驻黑窗；RC7
+  增加 Bridge/Service 缺失或损坏时的安装自愈。macOS 断网恢复、Windows/Linux 完整
+  实机和独立跨主机证据仍未完成，因此 RC7
   仍是 Technical Preview，M2 退出验收尚未通过。
 - 详细任务、协议、依赖关系和退出证据见
   [M2 实施计划](./m2-execution-plan.md)。

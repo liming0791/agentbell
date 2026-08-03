@@ -48,8 +48,8 @@ M2 不改变 AgentBell 的产品边界：优先使用公开 Hook，不注入 Age
   manifest/file-set/兼容范围/身份策略校验域已进入 Core。外部 Hook 只报告不删除；
   基于官方 `sigstore-go` 的 exact-artifact、Fulcio/Rekor 与固定 OIDC/repository/workflow
   验证器、`plugin verify` 命令、五个确定性插件包及 Release keyless 签名和下载后复验
-  已完成自动测试与工作流接线；`v0.3.0-rc.6` 已纳入 Windows windowless bridge/Core
-  子进程约束与飞书收件人可达性校验。
+  已完成自动测试与工作流接线；`v0.3.0-rc.7` 已纳入 Windows windowless bridge/Core
+  子进程约束、飞书收件人可达性校验和 Bridge/Service 安装自愈。
 - RelayEnvelope v1、跨 origin delivery key、Ed25519 exact-body 签名、peer scope、
   nonce store、durable receipt/outbox、queue ingress、HTTPS handler、严格有界 stdio
   frame/ACK 和 outbox forwarder 已完成自动测试；`remote.json`/`relay.json` 严格
@@ -67,7 +67,7 @@ M2 不改变 AgentBell 的产品边界：优先使用公开 Hook，不注入 Age
 - Release workflow 已拆为 `stage`/`finalize` 两次独立执行：Tag push 只留下验证后的
   Draft；维护者必须从同一 Tag 手动 finalize，重新下载复验 Draft 资产并完成 npm
   Trusted Publishing 后，才会把 GitHub Release 转为公开。
-- `v0.3.0-rc.6` 已作为 Technical Preview 发布；两个 npm 包自 RC5 起迁移到维护者拥有的
+- `v0.3.0-rc.7` 已作为 Technical Preview 发布；两个 npm 包自 RC5 起迁移到维护者拥有的
   `@liming0791` scope 并配置 Trusted Publisher。此次 GitHub 因账单状态拒绝启动
   stage/lifecycle/finalize job，维护者使用同一 Tag 成功 build job 的精确资产逐项复现
   Draft、Linux lifecycle、npm 字节一致性和最终 macOS 安装门禁；该发布证明 M2-605

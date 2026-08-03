@@ -928,15 +928,25 @@ func TestStdioPrompter(t *testing.T) {
 func TestExecRunner(t *testing.T) {
 	var stdout bytes.Buffer
 	runner := ExecRunner{Stdout: &stdout, Stderr: &bytes.Buffer{}, Stdin: strings.NewReader("")}
-	output, err := runner.Capture(context.Background(), "echo", "hello")
+	command := "sh"
+	captureArgs := []string{"-c", "printf hello"}
+	failureArgs := []string{"-c", "echo boom >&2; exit 1"}
+	interactiveArgs := []string{"-c", "printf hi"}
+	if runtime.GOOS == "windows" {
+		command = "cmd.exe"
+		captureArgs = []string{"/d", "/s", "/c", "echo hello"}
+		failureArgs = []string{"/d", "/s", "/c", "echo boom 1>&2 & exit /b 1"}
+		interactiveArgs = []string{"/d", "/s", "/c", "echo hi"}
+	}
+	output, err := runner.Capture(context.Background(), command, captureArgs...)
 	if err != nil || strings.TrimSpace(string(output)) != "hello" {
 		t.Fatalf("capture: %q %v", output, err)
 	}
-	if _, err := runner.Capture(context.Background(), "sh", "-c", "echo boom >&2; exit 1"); err == nil ||
+	if _, err := runner.Capture(context.Background(), command, failureArgs...); err == nil ||
 		!strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected stderr in error, got %v", err)
 	}
-	if err := runner.Interactive(context.Background(), "echo", "hi"); err != nil {
+	if err := runner.Interactive(context.Background(), command, interactiveArgs...); err != nil {
 		t.Fatalf("interactive: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "hi") {

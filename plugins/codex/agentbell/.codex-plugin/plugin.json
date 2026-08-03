@@ -1,6 +1,6 @@
 {
   "name": "agentbell",
-  "version": "0.3.0-rc.6",
+  "version": "0.3.0-rc.7",
   "description": "Send Codex lifecycle notifications to Feishu through AgentBell and lark-cli.",
   "author": {
     "name": "AgentBell contributors"

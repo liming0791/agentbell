@@ -28,6 +28,20 @@ type appServiceRunner struct {
 	calls int
 }
 
+func TestMain(m *testing.M) {
+	root, err := os.MkdirTemp("", "agentbell-app-test-")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("AGENTBELL_DATA_DIR", filepath.Join(root, "data")); err != nil {
+		_ = os.RemoveAll(root)
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(root)
+	os.Exit(code)
+}
+
 func (runner *appServiceRunner) Run(
 	_ context.Context,
 	_ string,
