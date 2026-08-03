@@ -41,16 +41,17 @@ var (
 )
 
 type ActiveState struct {
-	SchemaVersion   int    `json:"schemaVersion"`
-	Generation      uint64 `json:"generation"`
-	ActiveVersion   string `json:"activeVersion"`
-	PreviousVersion string `json:"previousVersion,omitempty"`
-	ServiceVersion  string `json:"serviceVersion,omitempty"`
-	Target          string `json:"target"`
-	Checksum        string `json:"checksum"`
-	ServiceChecksum string `json:"serviceChecksum,omitempty"`
-	BridgeChecksum  string `json:"bridgeChecksum"`
-	TransactionID   string `json:"transactionId"`
+	SchemaVersion         int    `json:"schemaVersion"`
+	Generation            uint64 `json:"generation"`
+	ActiveVersion         string `json:"activeVersion"`
+	PreviousVersion       string `json:"previousVersion,omitempty"`
+	ServiceVersion        string `json:"serviceVersion,omitempty"`
+	Target                string `json:"target"`
+	Checksum              string `json:"checksum"`
+	ServiceChecksum       string `json:"serviceChecksum,omitempty"`
+	BridgeChecksum        string `json:"bridgeChecksum"`
+	ServiceBridgeChecksum string `json:"serviceBridgeChecksum,omitempty"`
+	TransactionID         string `json:"transactionId"`
 }
 
 func (state ActiveState) Validate() error {
@@ -96,6 +97,9 @@ func (state ActiveState) Validate() error {
 	}
 	if !checksumPattern.MatchString(state.BridgeChecksum) {
 		return errors.New("active-state bridgeChecksum must be a lowercase SHA-256 digest")
+	}
+	if state.ServiceBridgeChecksum != "" && !checksumPattern.MatchString(state.ServiceBridgeChecksum) {
+		return errors.New("active-state serviceBridgeChecksum must be a lowercase SHA-256 digest")
 	}
 	if !transactionPattern.MatchString(state.TransactionID) {
 		return errors.New("active-state transactionId contains unsupported characters")
@@ -340,7 +344,8 @@ func DataRootFromBridgePath(executable string) (string, error) {
 	}
 	clean := filepath.Clean(executable)
 	name := filepath.Base(clean)
-	if name != "agentbell-bridge" && name != "agentbell-bridge.exe" {
+	if name != "agentbell-bridge" && name != "agentbell-bridge.exe" &&
+		name != "agentbell-service" && name != "agentbell-service.exe" {
 		return "", errors.New("bridge executable has an unexpected name")
 	}
 	versionDirectory := filepath.Dir(clean)

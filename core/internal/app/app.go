@@ -414,9 +414,10 @@ type cliAdapter interface {
 }
 
 type adapterRuntime struct {
-	CoreExecutable   string
-	BridgeExecutable string
-	ActiveGeneration uint64
+	CoreExecutable          string
+	BridgeExecutable        string
+	ServiceBridgeExecutable string
+	ActiveGeneration        uint64
 }
 
 func adapterForID(id string, resolved paths.Paths) (cliAdapter, error) {
@@ -614,10 +615,22 @@ func resolveAdapterRuntime(resolved paths.Paths) (adapterRuntime, error) {
 	if err != nil {
 		return adapterRuntime{}, err
 	}
+	serviceBridgeExecutable := bridgeExecutable
+	if runtime.GOOS == "windows" && active.ServiceBridgeChecksum != "" {
+		serviceBridgeExecutable, err = stableBridgeEntryPath(
+			resolved.DataDir,
+			"agentbell-service.exe",
+			"service bridge",
+		)
+		if err != nil {
+			return adapterRuntime{}, err
+		}
+	}
 	return adapterRuntime{
-		CoreExecutable:   coreExecutable,
-		BridgeExecutable: bridgeExecutable,
-		ActiveGeneration: active.Generation,
+		CoreExecutable:          coreExecutable,
+		BridgeExecutable:        bridgeExecutable,
+		ServiceBridgeExecutable: serviceBridgeExecutable,
+		ActiveGeneration:        active.Generation,
 	}, nil
 }
 
@@ -633,6 +646,10 @@ func stableBridgePath(dataRoot string) (string, error) {
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
+	return stableBridgeEntryPath(root, name, "bridge")
+}
+
+func stableBridgeEntryPath(root, name, label string) (string, error) {
 	candidate := filepath.Join(root, "bin", "bridge", "v1", name)
 	relative, err := filepath.Rel(root, candidate)
 	if err != nil ||
@@ -652,20 +669,21 @@ func stableBridgePath(dataRoot string) (string, error) {
 		}
 		info, statErr := os.Lstat(current)
 		if statErr != nil {
-			return "", fmt.Errorf("validate stable AgentBell bridge: %w", statErr)
+			return "", fmt.Errorf("validate stable AgentBell %s: %w", label, statErr)
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
 			return "", fmt.Errorf(
-				"stable AgentBell bridge path contains symlink %s",
+				"stable AgentBell %s path contains symlink %s",
+				label,
 				current,
 			)
 		}
 		if current == candidate {
 			if !info.Mode().IsRegular() {
-				return "", errors.New("stable AgentBell bridge is not a regular file")
+				return "", fmt.Errorf("stable AgentBell %s is not a regular file", label)
 			}
 			if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
-				return "", errors.New("stable AgentBell bridge is not executable")
+				return "", fmt.Errorf("stable AgentBell %s is not executable", label)
 			}
 		}
 	}
@@ -691,7 +709,7 @@ func configuredServiceManager(
 		return manager, nil
 	}
 	manager.ServiceMode = service.ServiceModeBridge
-	manager.BridgeExecutable = selectedRuntime.BridgeExecutable
+	manager.BridgeExecutable = selectedRuntime.ServiceBridgeExecutable
 	return manager, nil
 }
 

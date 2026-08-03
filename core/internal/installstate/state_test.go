@@ -209,6 +209,20 @@ func TestManagedCorePathAndDataRootResolution(t *testing.T) {
 	if resolved != dataRoot {
 		t.Fatalf("data root = %q, want %q", resolved, dataRoot)
 	}
+	servicePath := filepath.Join(
+		dataRoot,
+		"bin",
+		"bridge",
+		"v1",
+		"agentbell-service.exe",
+	)
+	resolved, err = DataRootFromBridgePath(servicePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != dataRoot {
+		t.Fatalf("service data root = %q, want %q", resolved, dataRoot)
+	}
 	for _, invalid := range []string{
 		filepath.Join(dataRoot, "bin", "bridge", "v2", "agentbell-bridge"),
 		filepath.Join(dataRoot, "bin", "agentbell-bridge"),

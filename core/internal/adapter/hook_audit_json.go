@@ -23,6 +23,8 @@ func (adapter *CodexAdapter) AuditHooks() (hookaudit.Report, error) {
 	if err != nil {
 		return hookaudit.Report{}, err
 	}
+	expectedCommand := invocation.shellCommand(false)
+	expectedWindowsCommand := codexWindowsCommand(invocation)
 	source := adapter.hookPath()
 	root, err := readHookAuditJSONObject(source)
 	if err != nil {
@@ -48,6 +50,10 @@ func (adapter *CodexAdapter) AuditHooks() (hookaudit.Report, error) {
 					return hookaudit.Invocation{},
 						"Codex Hook " + field + " must be a string"
 				}
+				if (field == "command" && command == expectedCommand) ||
+					(field == "commandWindows" && command == expectedWindowsCommand) {
+					continue
+				}
 				if _, err := parseAuditShellInvocation(command); err != nil {
 					return hookaudit.Invocation{}, err.Error()
 				}
@@ -55,6 +61,10 @@ func (adapter *CodexAdapter) AuditHooks() (hookaudit.Report, error) {
 			command, ok := handler[commandField].(string)
 			if !ok {
 				return hookaudit.Invocation{}, "Codex Hook command is unavailable"
+			}
+			if (commandField == "command" && command == expectedCommand) ||
+				(commandField == "commandWindows" && command == expectedWindowsCommand) {
+				return desiredInvocation, ""
 			}
 			value, err := parseAuditShellInvocation(command)
 			if err != nil {
@@ -71,13 +81,15 @@ func (adapter *CodexAdapter) AuditHooks() (hookaudit.Report, error) {
 		if runtime.GOOS == "windows" {
 			command = receipt.CommandWindows
 		}
-		if owned, err := parseAuditShellInvocation(command); err == nil {
-			request.OwnedLegacy = append(request.OwnedLegacy, hookaudit.OwnedHook{
-				Adapter:    codexAdapterID,
-				Event:      "Stop",
-				Invocation: owned,
-				Proof:      hookaudit.ProofReceipt,
-			})
+		if command != expectedCommand && command != expectedWindowsCommand {
+			if owned, err := parseAuditShellInvocation(command); err == nil {
+				request.OwnedLegacy = append(request.OwnedLegacy, hookaudit.OwnedHook{
+					Adapter:    codexAdapterID,
+					Event:      "Stop",
+					Invocation: owned,
+					Proof:      hookaudit.ProofReceipt,
+				})
+			}
 		}
 	}
 	return hookaudit.Audit(request)

@@ -527,6 +527,20 @@ func (manager *Manager) installWindowsTask(
 	); err != nil {
 		return result, fmt.Errorf("start AgentBell logon task: %w", err)
 	}
+	output, err := manager.runner().Run(
+		ctx,
+		"powershell.exe",
+		windowsTaskStateArgs()...,
+	)
+	if err != nil {
+		return result, fmt.Errorf("verify AgentBell Windows task start: %w", err)
+	}
+	if !strings.EqualFold(strings.TrimSpace(string(output)), "Running") {
+		return result, fmt.Errorf(
+			"verify AgentBell Windows task start: state is %q, not Running",
+			strings.TrimSpace(string(output)),
+		)
+	}
 	result.Installed = true
 	result.Loaded = true
 	result.Running = true
@@ -545,7 +559,23 @@ func (manager *Manager) statusWindowsTask(ctx context.Context) (ManagerResult, e
 	); err == nil {
 		result.Installed = true
 		result.Loaded = true
-		result.Message = "AgentBell Windows logon task is registered"
+		output, stateErr := manager.runner().Run(
+			ctx,
+			"powershell.exe",
+			windowsTaskStateArgs()...,
+		)
+		if stateErr != nil {
+			return result, fmt.Errorf("query AgentBell Windows task state: %w", stateErr)
+		}
+		result.Running = strings.EqualFold(strings.TrimSpace(string(output)), "Running")
+		if result.Running {
+			result.Message = "AgentBell Windows logon task is registered and running"
+		} else {
+			result.Message = fmt.Sprintf(
+				"AgentBell Windows logon task is registered but %s",
+				strings.ToLower(strings.TrimSpace(string(output))),
+			)
+		}
 	} else {
 		result.Message = "AgentBell Windows logon task is not registered"
 	}

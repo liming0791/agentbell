@@ -69,14 +69,15 @@ CI 按改动状态分层，避免同一批代码在 Draft、Ready PR 和 merge c
 - Ubuntu 执行 M2 durable relay stress gate；
 - Ubuntu 使用临时 CA、正常 x509 校验和 SPKI pin 执行真实 TLS/HTTPS
   pairing、ACK、断网恢复、去重、metadata-only 与 runtime proof smoke；
-- Ubuntu 干净 runner 交叉构建六个 Core 和 stable bridge 目标；Windows stable bridge
-  使用 `-H=windowsgui`，并以 `CREATE_NO_WINDOW` 拉起后台 Core；Windows Core 本身保持
-  Console subsystem，避免后台登录任务弹出常驻控制台；同一 runner 默认两路
+- Ubuntu 干净 runner 交叉构建六个 Core 和 stable bridge 目标，并为两个 Windows
+  目标额外构建后台 service 入口；Windows Hook bridge 和 Core 保持 Console
+  subsystem，保证 Hook 的 stdin、等待和退出码语义；只有 service 入口使用
+  `-H=windowsgui`，避免后台登录任务弹出常驻控制台；同一 runner 默认两路
   并行，避免拆 job，同时缩短墙钟时间。
 
 本地需要复现单路构建或调整 runner 内并发时，可设置
 `AGENTBELL_BUILD_CONCURRENCY=1..6`；默认值为 `2`。无论并发顺序如何，固定
-version/commit/buildTime 的 12 个产物必须逐字节一致。
+version/commit/buildTime 的 14 个产物必须逐字节一致。
 
 仓库升级到支持 Rulesets/分支保护的计划后，建议把 Ready PR 的以下 job 设为必需检查：
 

@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 const codexAdapterID = "codex"
@@ -316,7 +318,30 @@ func (adapter *CodexAdapter) commands() (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	return invocation.shellCommand(false), invocation.shellCommand(true), nil
+	return invocation.shellCommand(false), codexWindowsCommand(invocation), nil
+}
+
+func codexWindowsCommand(invocation hookInvocation) string {
+	arguments := " " + strings.Join(invocation.Args, " ")
+	// Codex already wraps commandWindows in cmd.exe /C on Windows. A handler
+	// that begins with a quoted executable is therefore double-quoted and
+	// exits before the hook process starts. Keep common managed paths fast and
+	// quote-free. For paths that need quoting, encode a PowerShell invocation
+	// so the outer cmd.exe command still contains no quote characters.
+	if !strings.ContainsAny(invocation.Executable, " \t&|<>^()%!\"") {
+		return invocation.Executable + arguments
+	}
+	script := "& '" +
+		strings.ReplaceAll(invocation.Executable, "'", "''") +
+		"'" + arguments
+	units := utf16.Encode([]rune(script))
+	encoded := make([]byte, len(units)*2)
+	for index, unit := range units {
+		encoded[index*2] = byte(unit)
+		encoded[index*2+1] = byte(unit >> 8)
+	}
+	return "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand " +
+		base64.StdEncoding.EncodeToString(encoded)
 }
 
 func (adapter *CodexAdapter) hookInvocation() (hookInvocation, error) {
@@ -411,7 +436,7 @@ func mergeCodexHooks(root map[string]any, command, commandWindows string) (bool,
 			"type":           "command",
 			"command":        command,
 			"commandWindows": commandWindows,
-			"timeout":        float64(5),
+			"timeout":        float64(10),
 			"statusMessage":  "Queueing AgentBell notification",
 		}
 		groups = append(groups, map[string]any{"hooks": []any{handler}})

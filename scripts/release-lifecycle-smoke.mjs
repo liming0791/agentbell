@@ -581,6 +581,9 @@ async function main() {
   const target = resolveTarget();
   const core = await readFile(path.join(directory, target.fileName));
   const bridge = await readFile(path.join(directory, target.bridgeFileName));
+  const serviceBridge = target.serviceBridgeFileName
+    ? await readFile(path.join(directory, target.serviceBridgeFileName))
+    : null;
   const manifest = JSON.parse(
     await readFile(path.join(directory, "release-manifest.json"), "utf8")
   );
@@ -597,8 +600,12 @@ async function main() {
       currentBundle: {
         core,
         bridge,
+        ...(serviceBridge ? { serviceBridge } : {}),
         coreChecksum: sha256(core),
         bridgeChecksum: sha256(bridge),
+        ...(serviceBridge
+          ? { serviceBridgeChecksum: sha256(serviceBridge) }
+          : {}),
         signatureStatus: manifest.signatureStatus,
         manifest
       }

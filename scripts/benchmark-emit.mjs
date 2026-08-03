@@ -86,9 +86,6 @@ try {
     [
       "build",
       "-trimpath",
-      ...(process.platform === "win32"
-        ? ["-ldflags", "-H=windowsgui"]
-        : []),
       "-o",
       bridge,
       "./cmd/agentbell-bridge"

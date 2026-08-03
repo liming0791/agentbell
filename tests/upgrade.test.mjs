@@ -23,6 +23,7 @@ import {
   runUpgradeServiceTransition,
   serviceTransitionAction,
   stableBridgePath,
+  stableServiceBridgePath,
   upgrade
 } from "../packages/cli/src/upgrade.mjs";
 import { resolveTarget } from "../packages/cli/src/platform.mjs";
@@ -157,6 +158,16 @@ function releaseBundle(version) {
   };
 }
 
+function windowsReleaseBundle(version) {
+  const bundle = releaseBundle(version);
+  const serviceBridge = Buffer.from(`service-bridge-${version}`);
+  return {
+    ...bundle,
+    serviceBridge,
+    serviceBridgeChecksum: sha256(serviceBridge)
+  };
+}
+
 function compatibleSettings(minCoreVersion = "0.3.0") {
   return {
     version: 1,
@@ -273,7 +284,10 @@ async function journalValues(dataRoot) {
 function releaseResponses(version, target, bundle = releaseBundle(version)) {
   const checksums = [
     `${bundle.coreChecksum}  ${target.fileName}`,
-    `${bundle.bridgeChecksum}  ${target.bridgeFileName}`
+    `${bundle.bridgeChecksum}  ${target.bridgeFileName}`,
+    ...(target.serviceBridgeFileName
+      ? [`${bundle.serviceBridgeChecksum}  ${target.serviceBridgeFileName}`]
+      : [])
   ].join("\n");
   const manifest = {
     schemaVersion: 1,
@@ -281,14 +295,23 @@ function releaseResponses(version, target, bundle = releaseBundle(version)) {
     signatureStatus: "technical-preview",
     artifacts: [
       { fileName: target.fileName, sha256: bundle.coreChecksum },
-      { fileName: target.bridgeFileName, sha256: bundle.bridgeChecksum }
+      { fileName: target.bridgeFileName, sha256: bundle.bridgeChecksum },
+      ...(target.serviceBridgeFileName
+        ? [{
+            fileName: target.serviceBridgeFileName,
+            sha256: bundle.serviceBridgeChecksum
+          }]
+        : [])
     ]
   };
   return new Map([
     ["checksums.txt", new WebResponse(checksums)],
     ["release-manifest.json", WebResponse.json(manifest)],
     [target.fileName, new WebResponse(bundle.core)],
-    [target.bridgeFileName, new WebResponse(bundle.bridge)]
+    [target.bridgeFileName, new WebResponse(bundle.bridge)],
+    ...(target.serviceBridgeFileName
+      ? [[target.serviceBridgeFileName, new WebResponse(bundle.serviceBridge)]]
+      : [])
   ]);
 }
 
@@ -349,6 +372,41 @@ test("upgrade atomically installs Core, stable bridge and active state", async (
   ));
   assert.equal(journal.status, "committed");
   assert.equal(journal.operation, "upgrade");
+});
+
+test("Windows upgrade installs separate hook and background service entries", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const bundle = windowsReleaseBundle("0.3.0-rc.8");
+  const result = await upgrade({
+    toVersion: "0.3.0-rc.8",
+    dataRoot,
+    platform: "win32",
+    architecture: "x64",
+    downloadBundle: async () => bundle,
+    smokeCore: async () => {},
+    restartService: async () => {}
+  });
+
+  assert.deepEqual(
+    await readFile(stableBridgePath({ dataRoot, platform: "win32" })),
+    bundle.bridge
+  );
+  assert.deepEqual(
+    await readFile(stableServiceBridgePath({ dataRoot, platform: "win32" })),
+    bundle.serviceBridge
+  );
+  const active = JSON.parse(await readFile(activeStatePath(dataRoot), "utf8"));
+  assert.equal(active.bridgeChecksum, bundle.bridgeChecksum);
+  assert.equal(active.serviceBridgeChecksum, bundle.serviceBridgeChecksum);
+  const install = JSON.parse(await readFile(path.join(
+    dataRoot,
+    "bin",
+    result.activeVersion,
+    "install.json"
+  ), "utf8"));
+  assert.equal(install.serviceBridgeFileName,
+    "agentbell-service-windows-amd64.exe");
+  assert.equal(install.serviceBridgeChecksum, bundle.serviceBridgeChecksum);
 });
 
 test("upgrade adopts one real M1 install and preserves rollback", async (context) => {
@@ -712,6 +770,42 @@ test("default downloader verifies direct release assets and authorization", asyn
   assert.ok(requests.every(
     ({ options }) => options.headers.authorization === "Bearer read-only-token"
   ));
+});
+
+test("Windows downloader fetches and verifies the service entry", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const version = "0.3.2-rc.8";
+  const target = resolveTarget("win32", "x64");
+  const responses = releaseResponses(
+    version,
+    target,
+    windowsReleaseBundle(version)
+  );
+  const requests = [];
+
+  await upgrade({
+    toVersion: version,
+    dataRoot,
+    platform: "win32",
+    architecture: "x64",
+    releaseBase: "https://downloads.example.test/agentbell",
+    fetchImpl: async (url) => {
+      const name = new WebURL(url).pathname.split("/").at(-1);
+      requests.push(name);
+      return responses.get(name)?.clone() ||
+        new WebResponse("missing", { status: 404 });
+    },
+    smokeCore: async () => {},
+    restartService: async () => {}
+  });
+
+  assert.deepEqual(requests, [
+    "checksums.txt",
+    "release-manifest.json",
+    target.fileName,
+    target.bridgeFileName,
+    target.serviceBridgeFileName
+  ]);
 });
 
 test("default downloader supports private GitHub release asset endpoints", async (context) => {

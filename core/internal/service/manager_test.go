@@ -16,8 +16,9 @@ type managerCall struct {
 }
 
 type fakeManagerRunner struct {
-	calls []managerCall
-	errs  map[string]error
+	calls   []managerCall
+	errs    map[string]error
+	outputs map[string][]byte
 }
 
 func (runner *fakeManagerRunner) Run(
@@ -29,6 +30,9 @@ func (runner *fakeManagerRunner) Run(
 	key := name + " " + strings.Join(args, " ")
 	if err := runner.errs[key]; err != nil {
 		return []byte("fake failure"), err
+	}
+	if output, ok := runner.outputs[key]; ok {
+		return output, nil
 	}
 	return []byte("ok"), nil
 }
@@ -336,9 +340,14 @@ func TestLinuxDryRunProbesUserManagerAndPredictsXDGFallback(t *testing.T) {
 }
 
 func TestWindowsTaskManagerInstallStatusAndUninstall(t *testing.T) {
-	runner := &fakeManagerRunner{errs: map[string]error{
-		`schtasks.exe /Query /TN \AgentBell\AgentBell`: errors.New("task not found"),
-	}}
+	runner := &fakeManagerRunner{
+		errs: map[string]error{
+			`schtasks.exe /Query /TN \AgentBell\AgentBell`: errors.New("task not found"),
+		},
+		outputs: map[string][]byte{
+			windowsStateCallKey(): []byte("Running\r\n"),
+		},
+	}
 	manager := &Manager{
 		GOOS:        "windows",
 		Executable:  `C:\Program Files\AgentBell\agentbell.exe`,
@@ -377,8 +386,9 @@ func TestWindowsTaskManagerInstallStatusAndUninstall(t *testing.T) {
 	}
 
 	delete(runner.errs, `schtasks.exe /Query /TN \AgentBell\AgentBell`)
+	runner.outputs[windowsStateCallKey()] = []byte("Running\r\n")
 	status, err := manager.Status(context.Background())
-	if err != nil || !status.Installed || !status.Loaded {
+	if err != nil || !status.Installed || !status.Loaded || !status.Running {
 		t.Fatalf("unexpected task status: %#v err=%v", status, err)
 	}
 	removed, err := manager.Uninstall(context.Background(), false)

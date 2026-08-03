@@ -165,8 +165,7 @@ func TestCodexInstallRemovesOnlyLegacyAgentBellPermissionHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(value), commandWindows) ||
-		!strings.Contains(string(value), "user-permission-handler") {
+	if !strings.Contains(string(value), "user-permission-handler") {
 		t.Fatalf("legacy cleanup removed the wrong handler: %s", value)
 	}
 	if !strings.Contains(string(value), `"Stop"`) {
