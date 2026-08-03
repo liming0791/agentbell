@@ -465,7 +465,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/previous artifacts/current
           gh release download "$PREVIOUS_TAG" \
-            --pattern 'agentbell-cli-*.tgz' \
+            --pattern '*agentbell-cli-*.tgz' \
             --pattern 'agentbell-linux-amd64' \
             --dir artifacts/previous
           gh release download "$CURRENT_TAG" --dir artifacts/current
@@ -508,7 +508,7 @@ jobs:
           echo "XDG_CONFIG_HOME=$data_root/home/.config" >> "$GITHUB_ENV"
           echo "AGENTBELL_GITHUB_TOKEN=$AGENTBELL_GITHUB_TOKEN" >> "$GITHUB_ENV"
 
-          previous_cli=(artifacts/previous/agentbell-cli-*.tgz)
+          previous_cli=(artifacts/previous/*agentbell-cli-*.tgz)
           if [ "${#previous_cli[@]}" -ne 1 ]; then
             echo "Expected exactly one previous Release CLI archive."
             exit 1
