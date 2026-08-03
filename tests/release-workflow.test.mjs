@@ -173,6 +173,8 @@ test("draft lifecycle CI uses two real Release boundaries without publishing", a
     "inputs.action == 'lifecycle'",
     "gh release view \"$PREVIOUS_TAG\"",
     "gh release download \"$PREVIOUS_TAG\"",
+    "--pattern '*agentbell-cli-*.tgz'",
+    "previous_cli=(artifacts/previous/*agentbell-cli-*.tgz)",
     "gh release download \"$CURRENT_TAG\"",
     "Install the real previous Release through its npm bootstrap",
     "install-core --version \"$previous_version\"",
