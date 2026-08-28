@@ -11,10 +11,9 @@ import (
 )
 
 type restartRunner struct {
-	calls           []managerCall
-	errs            map[string]error
-	outputs         map[string][]byte
-	outputSequences map[string][][]byte
+	calls   []managerCall
+	errs    map[string]error
+	outputs map[string][]byte
 }
 
 func (runner *restartRunner) Run(
@@ -27,10 +26,6 @@ func (runner *restartRunner) Run(
 	key := callKeyForManager(call)
 	if err := runner.errs[key]; err != nil {
 		return runner.outputs[key], err
-	}
-	if sequence := runner.outputSequences[key]; len(sequence) > 0 {
-		runner.outputSequences[key] = sequence[1:]
-		return sequence[0], nil
 	}
 	if output, ok := runner.outputs[key]; ok {
 		return output, nil
@@ -220,7 +215,7 @@ func TestManagerRestartWindowsTaskAndVerifiesRunning(t *testing.T) {
 	runner := &restartRunner{
 		errs: map[string]error{},
 		outputs: map[string][]byte{
-			windowsStateCallKey(): []byte("Running\r\n"),
+			windowsWaitStateCallKey(): []byte("Running\r\n"),
 		},
 	}
 	manager := &Manager{
@@ -242,53 +237,32 @@ func TestManagerRestartWindowsTaskAndVerifiesRunning(t *testing.T) {
 		`schtasks.exe /Query /TN \AgentBell\AgentBell`,
 		`schtasks.exe /End /TN \AgentBell\AgentBell`,
 		`schtasks.exe /Run /TN \AgentBell\AgentBell`,
-		windowsStateCallKey(),
+		windowsWaitStateCallKey(),
 	}
 	if got := managerCallKeys(runner.calls); !equalStrings(got, want) {
 		t.Fatalf("unexpected restart calls: %#v", got)
 	}
 
 	runner.calls = nil
-	runner.outputs[windowsStateCallKey()] = []byte("Ready")
-	manager.windowsTaskStartAttempts = 2
+	runner.outputs[windowsWaitStateCallKey()] = []byte("Ready")
 	if _, err := manager.Restart(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "verify") {
 		t.Fatalf("expected Windows verification error, got %v", err)
 	}
 }
 
-func TestManagerRestartWindowsTaskWaitsForRunning(t *testing.T) {
-	runner := &restartRunner{
-		errs: map[string]error{},
-		outputs: map[string][]byte{
-			windowsStateCallKey(): []byte("Running"),
-		},
-		outputSequences: map[string][][]byte{
-			windowsStateCallKey(): {[]byte("Ready"), []byte("Ready"), []byte("Running")},
-		},
-	}
-	manager := &Manager{
-		GOOS:                         "windows",
-		Executable:                   `C:\Program Files\AgentBell\agentbell.exe`,
-		HomeDir:                      `C:\Users\test`,
-		LogDir:                       `C:\Users\test\AppData\Local\AgentBell\logs`,
-		Runner:                       runner,
-		windowsTaskStartAttempts:     3,
-		windowsTaskStartPollInterval: 0,
-	}
-
-	result, err := manager.Restart(context.Background())
-	if err != nil || !result.Running {
-		t.Fatalf("Windows restart did not wait for Running: %#v err=%v", result, err)
-	}
-	stateCalls := 0
-	for _, call := range runner.calls {
-		if callKeyForManager(call) == windowsStateCallKey() {
-			stateCalls++
+func TestWindowsTaskWaitScriptIsBoundedInOnePowerShell(t *testing.T) {
+	for _, expected := range []string{
+		"AddSeconds(5)",
+		"Start-Sleep -Milliseconds 100",
+		"$state -eq 'Running'",
+	} {
+		if !strings.Contains(windowsTaskWaitStateScript, expected) {
+			t.Fatalf("Windows task wait script missing %q", expected)
 		}
 	}
-	if stateCalls != 3 {
-		t.Fatalf("Windows restart state checks = %d, want 3", stateCalls)
+	if strings.Contains(windowsTaskStateScript, "Start-Sleep") {
+		t.Fatal("ordinary Windows task status unexpectedly polls")
 	}
 }
 

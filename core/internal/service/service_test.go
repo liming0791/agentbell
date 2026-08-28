@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -216,6 +217,38 @@ func TestServiceLockRejectsSecondInstance(t *testing.T) {
 	defer first.Release()
 	if _, err := acquireLock(path, time.Minute); err == nil {
 		t.Fatal("expected second lock to fail")
+	}
+}
+
+func TestServiceLockImmediatelyRecoversDeadPID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service.lock")
+	record := lockRecord{
+		PID:       2147483646,
+		Heartbeat: time.Now().UTC(),
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	lock, err := acquireLock(path, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	current, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentRecord := lockRecord{}
+	if err := json.Unmarshal(current, &currentRecord); err != nil {
+		t.Fatal(err)
+	}
+	if currentRecord.PID != os.Getpid() {
+		t.Fatalf("recovered lock PID = %d, want %d", currentRecord.PID, os.Getpid())
 	}
 }
 

@@ -33,7 +33,24 @@ func acquireLock(path string, staleAfter time.Duration) (*serviceLock, error) {
 		return nil, err
 	}
 	if time.Since(info.ModTime()) <= staleAfter {
-		return nil, errors.New("another AgentBell service instance is running")
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil, readErr
+		}
+		record := lockRecord{}
+		if decodeErr := json.Unmarshal(raw, &record); decodeErr != nil {
+			return nil, fmt.Errorf("decode AgentBell service lock: %w", decodeErr)
+		}
+		if record.PID <= 0 {
+			return nil, errors.New("AgentBell service lock has an invalid PID")
+		}
+		alive, aliveErr := serviceProcessAlive(record.PID)
+		if aliveErr != nil {
+			return nil, fmt.Errorf("check AgentBell service lock PID: %w", aliveErr)
+		}
+		if alive {
+			return nil, errors.New("another AgentBell service instance is running")
+		}
 	}
 	if err := os.Remove(path); err != nil {
 		return nil, fmt.Errorf("remove stale service lock: %w", err)

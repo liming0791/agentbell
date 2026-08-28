@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
@@ -68,11 +67,6 @@ type Manager struct {
 	UID              string
 	Runner           ManagerRunner
 	LookPath         func(string) (string, error)
-
-	// Tests can reduce the bounded Windows task-start polling window without
-	// changing the production defaults.
-	windowsTaskStartAttempts     int
-	windowsTaskStartPollInterval time.Duration
 }
 
 type ManagerResult struct {

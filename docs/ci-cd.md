@@ -201,14 +201,14 @@ Draft，但 `finalize` 会在 npm 或 GitHub 公开发布前失败，Draft 保�
 ## 创建 RC
 
 ```bash
-npm run version:set -- 0.3.0-rc.13
+npm run version:set -- 0.3.0-rc.14
 npm run ci
-npm run release:verify -- v0.3.0-rc.13
+npm run release:verify -- v0.3.0-rc.14
 git add .
 git commit -m "feat: deliver M2 release candidate"
-git tag -a v0.3.0-rc.13 -m "AgentBell v0.3.0-rc.13"
+git tag -a v0.3.0-rc.14 -m "AgentBell v0.3.0-rc.14"
 git push origin main
-git push origin v0.3.0-rc.13
+git push origin v0.3.0-rc.14
 ```
 
 Tag push 只完成 `stage`，成功后 Draft 仍不会公开。检查 stage run 与 Draft 资产后，
@@ -216,8 +216,8 @@ Tag push 只完成 `stage`，成功后 Draft 仍不会公开。检查 stage run 
 
 ```bash
 gh workflow run release.yml \
-  --ref v0.3.0-rc.13 \
-  -f tag=v0.3.0-rc.13 \
+  --ref v0.3.0-rc.14 \
+  -f tag=v0.3.0-rc.14 \
   -f action=finalize
 ```
 
