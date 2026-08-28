@@ -142,26 +142,53 @@ test("upgrade default service transition reconciles the stable bridge definition
   }]);
 });
 
-test("Windows upgrade quiesce removes the old task through the active Core", async () => {
+test("Windows upgrade quiesce removes the task without the active Core", async () => {
   const calls = [];
-  const corePath = path.join("managed", "0.3.0-rc.9", "agentbell.exe");
-  await runUpgradeServiceQuiesce({ corePath }, async (executable, args, stdio) => {
+  await runUpgradeServiceQuiesce({}, async (executable, args, stdio) => {
     calls.push({ executable, args, stdio });
+    if (args[0] === "/Query") {
+      return 0;
+    }
     return 0;
   });
   await assert.rejects(
-    runUpgradeServiceQuiesce({ corePath }, async () => 17),
-    /service uninstall exited with code 17/
+    runUpgradeServiceQuiesce({}, async (_executable, args) =>
+      args[0] === "/Delete" ? 17 : 0),
+    /Windows task removal exited with code 17/
   );
   assert.deepEqual(calls, [{
-    executable: corePath,
-    args: ["service", "uninstall", "--json"],
+    executable: "schtasks.exe",
+    args: ["/Query", "/TN", "\\AgentBell\\AgentBell"],
+    stdio: {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore"
+    }
+  }, {
+    executable: "schtasks.exe",
+    args: ["/End", "/TN", "\\AgentBell\\AgentBell"],
+    stdio: {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore"
+    }
+  }, {
+    executable: "schtasks.exe",
+    args: ["/Delete", "/TN", "\\AgentBell\\AgentBell", "/F"],
     stdio: {
       stdin: "ignore",
       stdout: "ignore",
       stderr: "inherit"
     }
   }]);
+
+  const absentCalls = [];
+  await runUpgradeServiceQuiesce({}, async (executable, args, stdio) => {
+    absentCalls.push({ executable, args, stdio });
+    return 1;
+  });
+  assert.equal(absentCalls.length, 1);
+  assert.equal(absentCalls[0].args[0], "/Query");
 });
 
 function releaseBundle(version) {
@@ -430,6 +457,35 @@ test("Windows upgrade installs separate hook and background service entries", as
   assert.equal(install.serviceBridgeFileName,
     "agentbell-service-windows-amd64.exe");
   assert.equal(install.serviceBridgeChecksum, bundle.serviceBridgeChecksum);
+});
+
+test("upgrade repairs exact cached Core metadata left by interrupted cleanup", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const version = "0.3.0-rc.10";
+  const bundle = windowsReleaseBundle(version);
+  const versionDirectory = path.join(dataRoot, "bin", version);
+  await mkdir(versionDirectory, { recursive: true });
+  await writeFile(path.join(versionDirectory, "agentbell.exe"), bundle.core);
+
+  const result = await upgrade({
+    toVersion: version,
+    dataRoot,
+    platform: "win32",
+    architecture: "x64",
+    downloadBundle: async () => bundle,
+    smokeCore: async () => {},
+    restartService: async () => {}
+  });
+
+  assert.equal(result.activeVersion, version);
+  const metadata = JSON.parse(await readFile(
+    path.join(versionDirectory, "install.json"),
+    "utf8"
+  ));
+  assert.equal(metadata.checksum, bundle.coreChecksum);
+  assert.equal(metadata.bridgeChecksum, bundle.bridgeChecksum);
+  assert.equal(metadata.serviceBridgeChecksum, bundle.serviceBridgeChecksum);
+  assert.equal(metadata.transactionId, result.transactionId);
 });
 
 test("Windows upgrade quiesces the old service before replacing locked bridges", async (context) => {
@@ -1165,6 +1221,30 @@ test("same-version install repairs a missing or corrupt stable bridge", async (c
   const repairs = journals.filter((journal) => journal.operation === "repair");
   assert.equal(repairs.length, 2);
   assert.ok(repairs.every((journal) => journal.status === "committed"));
+});
+
+test("same-version repair restores missing active install metadata", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const version = "0.3.7";
+  const dependencies = {
+    dataRoot,
+    platform: "linux",
+    architecture: "x64",
+    downloadBundle: async () => releaseBundle(version),
+    smokeCore: async () => {},
+    restartService: async () => {}
+  };
+  const first = await upgrade({ ...dependencies, toVersion: version });
+  const metadataPath = path.join(dataRoot, "bin", version, "install.json");
+  await rm(metadataPath);
+
+  const repaired = await upgrade({ ...dependencies, toVersion: version });
+
+  assert.equal(repaired.repaired, true);
+  assert.equal(repaired.generation, first.generation + 1);
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+  assert.equal(metadata.version, version);
+  assert.equal(metadata.checksum, sha256(Buffer.from(`core-${version}`)));
 });
 
 test("same-version repair rejects release assets that changed in place", async (context) => {

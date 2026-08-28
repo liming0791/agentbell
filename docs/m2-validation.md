@@ -592,19 +592,31 @@ Windows 实机从 RC7 升级 RC9 时复现：计划任务仍运行旧
 状态的独立核对同时证明问题不是服务未注册，而是升级器在停旧服务前替换了它正在运行
 的稳定 EXE。
 
-RC10 bootstrap 的修复与自动门禁：
+RC10 Draft 的自动
+[stage](https://github.com/liming0791/agentbell/actions/runs/33157204919) 与 RC9→RC10
+[lifecycle](https://github.com/liming0791/agentbell/actions/runs/33157658752) 均通过，但未据此
+直接公开。Windows 最终 Draft 实机验收发现旧 active state 声明了 service bridge、文件
+却已缺失时，旧 Core 在执行 `service uninstall` 前先做 bridge 校验并退出，因此 RC10
+bootstrap 仍无法 quiesce。失败补偿删除目标版本时又先删除 `install.json`，随后因目标
+Core EXE 被占用而留下只有 Core 的半安装目录；下一次尝试只检查 Core checksum，错误
+复用了缺失元数据的目录。RC10 因此保持 Draft，npm 未发布。
 
-- Windows 有旧 Core 时，下载、校验和 Core smoke 完成后，先由旧 Core 执行幂等的
-  `service uninstall --json`，只停用并移除 `\AgentBell\AgentBell`；
+RC11 bootstrap 的最终修复与门禁：
+
+- Windows 下载、校验和 Core smoke 完成后，bootstrap 直接以 `schtasks.exe` 查询、停止
+  并删除 `\AgentBell\AgentBell`，不再依赖旧 Core 或 stable bridge 健康；
 - 停服后只清理稳定入口目录内名称严格匹配的历史 `.tmp.previous` 文件，再替换 Hook
   bridge 与无窗口 service bridge；短暂文件占用在重命名和删除阶段均有有界重试；
 - 激活成功后由新 Core 执行 `service install --json` 并验证 Running；任一步失败时先
   停用可能已启动的新任务，再恢复旧 bridge / active state，并以旧 Core 重新安装服务；
-- Windows 回归 fixture 把稳定入口模拟为“服务运行时写入即 EPERM”，断言 quiesce 必须
-  先于两个入口替换；另覆盖 RC9 精确残留清理、非匹配文件保留，以及激活首写失败后旧
-  active state、旧服务和版本目录的完整补偿；
-- 本次未修改 Codex Hook 定义。升级 Core/Bridge 后 Hook 配置字节不变时，Codex 的 Hook
-  hash 不变，不产生新的信任要求。
+- 缓存版本复用同时校验 Core 与严格 `install.json`。Core 精确匹配 Release、仅元数据因
+  中断清理缺失时会重建；Core 缺失则清除精确版本目录后重新 staging，其他冲突拒绝；
+- Windows 回归 fixture 覆盖任务存在/不存在/删除失败、运行时写入口即 EPERM、RC9 精确
+  残留清理、非匹配文件保留、激活失败补偿，以及半安装和 active 元数据自愈；
+- 同机使用 RC11 源码 bootstrap 和 RC10 Draft 原生产物，已从损坏 RC9 成功激活 RC10，
+  再从缺失 `install.json` 的 active RC10 完成同版本修复；最终 generation 10、任务
+  `Running`、`service status.running=true`、`bridge doctor.healthy=true`，Codex
+  `hooks.json` SHA-256 前后相同。本次未修改 Hook 定义，不产生新的信任要求。
 
 ## 实机矩阵
 
@@ -612,7 +624,7 @@ RC10 bootstrap 的修复与自动门禁：
 | --- | --- | --- | --- | --- |
 | 飞书 user/bot 一次性绑定 | 既有 bot 通道直接发送通过；一次性绑定与 user 模式待验 | 待验 | 待验 | Host 绑定后复用，待验 |
 | 设置/模板/免打扰/多通道 | 待验 | 待验 | 待验 | Host policy，待验 |
-| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | 待验 | 待验 | shim 独立升级，待验 |
+| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | 损坏 RC9→RC10 Draft 与半安装同版本修复通过；RC11 最终资产待发布后复验 | 待验 | shim 独立升级，待验 |
 | Codex/Claude/Kimi stable Hook | Codex 0.146、Claude Code 2.0.19、Kimi Code 均由新任务/会话取得 generation 2 `task.completed` proof；Desktop/IDE Surface 矩阵仍待验 | 待验 | 待验 | 按产品运行位置待验 |
 | 登录服务重启/断网恢复 | LaunchAgent 升级/回滚重启与两次后台飞书投递通过；断网待验 | 待验 | 待验 | 待验 |
 | WSL host-pull，无 listener | 不适用 | 待验 | 不适用 | 待验 |
