@@ -176,7 +176,7 @@ func TestAdapterFactoryRejectsBrokenActiveRuntime(t *testing.T) {
 }
 
 func TestServiceRestartUsesStableBridgeRuntime(t *testing.T) {
-	_, _, bridgePath, _ := activeRuntimeFixture(t)
+	resolved, _, bridgePath, _ := activeRuntimeFixture(t)
 	root := t.TempDir()
 	runner := &appServiceRunner{}
 	manager := &service.Manager{
@@ -224,12 +224,15 @@ func TestServiceRestartUsesStableBridgeRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	if manager.ServiceMode != service.ServiceModeBridge ||
-		manager.BridgeExecutable != bridgePath {
+		manager.BridgeExecutable != bridgePath ||
+		manager.StateDir != resolved.StateDir {
 		t.Fatalf(
-			"service runtime = (%q, %q), want bridge %q",
+			"service runtime = (%q, %q, %q), want bridge %q and state %q",
 			manager.ServiceMode,
 			manager.BridgeExecutable,
+			manager.StateDir,
 			bridgePath,
+			resolved.StateDir,
 		)
 	}
 	if !result.Running || runner.calls != 2 {

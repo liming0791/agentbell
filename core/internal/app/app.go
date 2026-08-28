@@ -698,6 +698,7 @@ func configuredServiceManager(
 	if err != nil {
 		return nil, err
 	}
+	manager.StateDir = resolved.StateDir
 	selectedRuntime, err := resolveAdapterRuntime(resolved)
 	if err != nil {
 		return nil, err

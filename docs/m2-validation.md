@@ -669,13 +669,32 @@ Draft 且 npm 未发布。RC14 的修复与门禁：
 - 回归测试覆盖活进程锁拒绝、死 PID 新鲜锁立即恢复，以及等待脚本的五秒上限和单进程
   结构。
 
+RC14 的自动
+[stage](https://github.com/liming0791/agentbell/actions/runs/33163707633) 与 RC9→RC14
+[lifecycle](https://github.com/liming0791/agentbell/actions/runs/33164023049) 均通过，仍未直接
+公开。Windows 最终实机从 `Ready`、`Last Result=1` 成功激活 generation 14，任务
+`Running`、bridge/Core 父子关系和 bridge doctor 均正常，Codex `hooks.json` SHA-256
+仍未改变；但第一次真实 `service restart` 在 8.0 秒后返回任务 `Ready`。诊断证明
+Task Scheduler 已报告 bridge 停止时，kill-on-close Job Object 中的旧 Core 仍可能短暂
+存活并持有新鲜锁，新任务因此在旧 Core 真正退出前启动并被双实例保护拒绝。RC14 保持
+Draft 且 npm 未发布。
+
+RC15 在 `/End` 与 `/Run` 之间增加一个有五秒硬上限的单 PowerShell 静默等待：只有任务
+不再为 `Running`，且 `state/queue/service.lock` 记录的旧 PID 已真实退出，才允许启动新
+任务。锁内容无法安全解析或旧 PID 持续存活时会停止发布路径并返回错误，绝不猜测或
+终止未验证进程。回归测试固定该调用顺序，并证明静默等待失败时不会执行 `/Run`。同机
+本地 RC15 候选 Core 管理真实 stable service bridge 和 active RC14 Core，连续两次
+`service restart` 均成功：bridge/Core PID 每次完整更换，耗时分别约 8.0 秒和 8.6 秒，
+任务保持 `Running`，锁 PID 等于新 Core，bridge doctor 健康且 Codex Hook SHA-256
+不变。最终 Draft 仍需重复同一门禁。
+
 ## 实机矩阵
 
 | 场景 | macOS | Windows | Linux | WSL / SSH / Container |
 | --- | --- | --- | --- | --- |
 | 飞书 user/bot 一次性绑定 | 既有 bot 通道直接发送通过；一次性绑定与 user 模式待验 | 待验 | 待验 | Host 绑定后复用，待验 |
 | 设置/模板/免打扰/多通道 | 待验 | 待验 | 待验 | Host policy，待验 |
-| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | RC13 已从真实 RC10 孤儿状态升级成功并定位 restart 新鲜锁；RC14 待最终 Draft 复验 | 待验 | shim 独立升级，待验 |
+| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | RC15 本地候选已连续重启两次；最终 Draft 升级与重复重启待验 | 待验 | shim 独立升级，待验 |
 | Codex/Claude/Kimi stable Hook | Codex 0.146、Claude Code 2.0.19、Kimi Code 均由新任务/会话取得 generation 2 `task.completed` proof；Desktop/IDE Surface 矩阵仍待验 | 待验 | 待验 | 按产品运行位置待验 |
 | 登录服务重启/断网恢复 | LaunchAgent 升级/回滚重启与两次后台飞书投递通过；断网待验 | 待验 | 待验 | 待验 |
 | WSL host-pull，无 listener | 不适用 | 待验 | 不适用 | 待验 |
