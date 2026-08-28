@@ -583,6 +583,29 @@ Header 复验：Windows amd64/arm64 Core 均为 `WindowsCUI (3)`，bridge 均为
 测试后进程与临时目录已清理。已安装 RC5 不会被工作树修改，仍需下一 Release 升级并
 重新安装服务后完成真实登录/重启无窗口复验。
 
+## Windows 运行中 Bridge 升级修复（2026-08-28）
+
+Windows 实机从 RC7 升级 RC9 时复现：计划任务仍运行旧
+`agentbell-bridge.exe service-v1`，原子替换虽已把旧文件改名为
+`.agentbell-bridge.exe.<pid>.<nonce>.tmp.previous`，但 Windows 拒绝删除仍被进程占用的
+旧映像，升级以 `EPERM: operation not permitted, unlink ...tmp.previous` 中断。任务
+状态的独立核对同时证明问题不是服务未注册，而是升级器在停旧服务前替换了它正在运行
+的稳定 EXE。
+
+RC10 bootstrap 的修复与自动门禁：
+
+- Windows 有旧 Core 时，下载、校验和 Core smoke 完成后，先由旧 Core 执行幂等的
+  `service uninstall --json`，只停用并移除 `\AgentBell\AgentBell`；
+- 停服后只清理稳定入口目录内名称严格匹配的历史 `.tmp.previous` 文件，再替换 Hook
+  bridge 与无窗口 service bridge；短暂文件占用在重命名和删除阶段均有有界重试；
+- 激活成功后由新 Core 执行 `service install --json` 并验证 Running；任一步失败时先
+  停用可能已启动的新任务，再恢复旧 bridge / active state，并以旧 Core 重新安装服务；
+- Windows 回归 fixture 把稳定入口模拟为“服务运行时写入即 EPERM”，断言 quiesce 必须
+  先于两个入口替换；另覆盖 RC9 精确残留清理、非匹配文件保留，以及激活首写失败后旧
+  active state、旧服务和版本目录的完整补偿；
+- 本次未修改 Codex Hook 定义。升级 Core/Bridge 后 Hook 配置字节不变时，Codex 的 Hook
+  hash 不变，不产生新的信任要求。
+
 ## 实机矩阵
 
 | 场景 | macOS | Windows | Linux | WSL / SSH / Container |
