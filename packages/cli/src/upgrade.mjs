@@ -27,6 +27,7 @@ const bridgeProtocolVersion = "v1";
 const lockTimeoutMs = 10_000;
 const lockStaleMs = 60_000;
 const windowsServiceTaskName = "\\AgentBell\\AgentBell";
+const maximumServiceLockBytes = 4096;
 const versionPattern =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const checksumPattern = /^[a-f0-9]{64}$/;
@@ -1070,7 +1071,8 @@ async function defaultUpgradeService(request) {
 
 export async function runUpgradeServiceQuiesce(
   request,
-  execute = runExecutable
+  execute = runExecutable,
+  inspectProcess = inspectWindowsServiceProcess
 ) {
   const taskName = request.taskName || windowsServiceTaskName;
   const queryCode = await execute(
@@ -1078,24 +1080,24 @@ export async function runUpgradeServiceQuiesce(
     ["/Query", "/TN", taskName],
     { stdin: "ignore", stdout: "ignore", stderr: "ignore" }
   );
-  if (queryCode !== 0) {
-    return;
-  }
-  await execute(
-    "schtasks.exe",
-    ["/End", "/TN", taskName],
-    { stdin: "ignore", stdout: "ignore", stderr: "ignore" }
-  );
-  const deleteCode = await execute(
-    "schtasks.exe",
-    ["/Delete", "/TN", taskName, "/F"],
-    { stdin: "ignore", stdout: "ignore", stderr: "inherit" }
-  );
-  if (deleteCode !== 0) {
-    throw new Error(
-      `AgentBell Windows task removal exited with code ${deleteCode}.`
+  if (queryCode === 0) {
+    await execute(
+      "schtasks.exe",
+      ["/End", "/TN", taskName],
+      { stdin: "ignore", stdout: "ignore", stderr: "ignore" }
     );
+    const deleteCode = await execute(
+      "schtasks.exe",
+      ["/Delete", "/TN", taskName, "/F"],
+      { stdin: "ignore", stdout: "ignore", stderr: "inherit" }
+    );
+    if (deleteCode !== 0) {
+      throw new Error(
+        `AgentBell Windows task removal exited with code ${deleteCode}.`
+      );
+    }
   }
+  await stopVerifiedWindowsServiceOrphan(request, execute, inspectProcess);
 }
 
 async function defaultUpgradeServiceQuiesce(request) {
@@ -1118,6 +1120,174 @@ function runExecutable(executable, args, stdio) {
       }
     });
   });
+}
+
+function inspectWindowsServiceProcess(pid) {
+  const script = [
+    `$process = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" ` +
+      "-ErrorAction Stop",
+    "if ($null -eq $process) { exit 3 }",
+    "$result = [ordered]@{ executablePath = [string]$process.ExecutablePath; " +
+      "commandLine = [string]$process.CommandLine }",
+    "[Console]::Out.Write(($result | ConvertTo-Json -Compress))"
+  ].join("; ");
+  return new Promise((resolve, reject) => {
+    const child = spawn("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      script
+    ], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let oversized = false;
+    const collect = (field, chunk) => {
+      const next = field + chunk.toString("utf8");
+      if (Buffer.byteLength(next) > maximumServiceLockBytes) {
+        oversized = true;
+        child.kill();
+        return field;
+      }
+      return next;
+    };
+    child.stdout.on("data", (chunk) => {
+      stdout = collect(stdout, chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr = collect(stderr, chunk);
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (oversized) {
+        reject(new Error("Windows service process inspection exceeded its output limit."));
+      } else if (signal) {
+        reject(new Error(`Windows service process inspection ended by ${signal}.`));
+      } else if (code === 3) {
+        resolve(null);
+      } else if (code !== 0) {
+        reject(new Error(
+          `Windows service process inspection exited with code ${code}: ` +
+          stderr.trim().slice(0, 1024)
+        ));
+      } else {
+        try {
+          const value = JSON.parse(stdout);
+          assertKnownFields(
+            value,
+            ["executablePath", "commandLine"],
+            "Windows service process",
+            ["executablePath", "commandLine"]
+          );
+          if (typeof value.executablePath !== "string" ||
+              typeof value.commandLine !== "string") {
+            throw new Error("Windows service process fields must be strings.");
+          }
+          resolve(value);
+        } catch (error) {
+          reject(new Error(`parse Windows service process: ${error.message}`, {
+            cause: error
+          }));
+        }
+      }
+    });
+  });
+}
+
+async function loadWindowsServiceLock(stateDir) {
+  if (!stateDir) {
+    return null;
+  }
+  const lockPath = path.join(stateDir, "queue", "service.lock");
+  let info;
+  try {
+    info = await lstat(lockPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  if (!info.isFile() || info.isSymbolicLink() || info.size > maximumServiceLockBytes) {
+    throw new Error("AgentBell service lock is not a bounded regular file.");
+  }
+  let record;
+  try {
+    record = JSON.parse(await readFile(lockPath, "utf8"));
+  } catch (error) {
+    throw new Error(`parse AgentBell service lock: ${error.message}`, {
+      cause: error
+    });
+  }
+  assertKnownFields(record, ["pid", "heartbeat"], "AgentBell service lock", [
+    "pid",
+    "heartbeat"
+  ]);
+  if (!Number.isSafeInteger(record.pid) || record.pid <= 0 ||
+      typeof record.heartbeat !== "string") {
+    throw new Error("AgentBell service lock has invalid process metadata.");
+  }
+  return { lockPath, pid: record.pid };
+}
+
+function sameWindowsPath(left, right) {
+  return path.win32.normalize(left).toLowerCase() ===
+    path.win32.normalize(right).toLowerCase();
+}
+
+function isWindowsServiceCommand(commandLine) {
+  return /(?:^|\s)"?service"?\s+"?run"?\s+"?--foreground"?\s*$/i.test(
+    commandLine
+  );
+}
+
+async function stopVerifiedWindowsServiceOrphan(
+  request,
+  execute,
+  inspectProcess
+) {
+  const lock = await loadWindowsServiceLock(request.stateDir);
+  if (lock === null) {
+    return;
+  }
+  let process = await inspectProcess(lock.pid);
+  if (process === null) {
+    await rm(lock.lockPath, { force: true });
+    return;
+  }
+  const allowedCorePaths = [
+    ...(request.allowedCorePaths || []),
+    request.corePath
+  ].filter((value) => typeof value === "string" && value !== "");
+  if (!allowedCorePaths.some((value) =>
+    sameWindowsPath(value, process.executablePath)) ||
+      !isWindowsServiceCommand(process.commandLine)) {
+    throw new Error(
+      `refuse to terminate unverified AgentBell service lock PID ${lock.pid}.`
+    );
+  }
+  const killCode = await execute(
+    "taskkill.exe",
+    ["/PID", String(lock.pid), "/T", "/F"],
+    { stdin: "ignore", stdout: "ignore", stderr: "inherit" }
+  );
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    process = await inspectProcess(lock.pid);
+    if (process === null) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (process !== null) {
+    throw new Error(
+      `AgentBell managed service process ${lock.pid} remained after taskkill ` +
+      `exited with code ${killCode}.`
+    );
+  }
+  await rm(lock.lockPath, { force: true });
 }
 
 async function readOptional(filePath) {
@@ -1647,6 +1817,7 @@ function newCompensation() {
 
 async function compensateUpgrade({
   dataRoot,
+  stateDir,
   previousActive,
   previousCorePath,
   attemptedGeneration,
@@ -1686,6 +1857,8 @@ async function compensateUpgrade({
           ? { activeVersion: transaction.toVersion }
           : previousActive,
         previousActive,
+        stateDir,
+        allowedCorePaths: [corePath, previousCorePath],
         compensation: true
       });
     });
@@ -2023,7 +2196,9 @@ export async function upgrade({
         corePath: previousCorePath,
         bridgePath,
         active,
-        previousActive: active
+        previousActive: active,
+        stateDir: runtimeDirectories.stateDir,
+        allowedCorePaths: [previousCorePath]
       });
       await cleanupStableWriteResidues(bridgePath, platform);
       if (target.serviceBridgeFileName) {
@@ -2140,6 +2315,7 @@ export async function upgrade({
     )) {
       const result = await compensateUpgrade({
         dataRoot,
+        stateDir: runtimeDirectories.stateDir,
         previousActive: active,
         previousCorePath,
         attemptedGeneration,

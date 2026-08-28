@@ -627,13 +627,34 @@ RC11 的自动
 约五秒、上下文可取消的有界轮询；仅观察到 `Running` 才报告成功，持续 `Ready` 仍明确
 失败。回归测试覆盖 `Ready → Running` 与持续 `Ready` 超时。
 
+RC12 的自动
+[stage](https://github.com/liming0791/agentbell/actions/runs/33160601393) 与 RC9→RC12
+[lifecycle](https://github.com/liming0791/agentbell/actions/runs/33160954656) 均通过，仍未直接
+公开。Windows 最终实机基线进一步证明任务为 `Ready`、`Last Result=1`，但版本化 RC10
+Core 仍以 `service run --foreground` 孤儿进程存活并持续刷新 `service.lock`。原因是
+`schtasks /End` 结束稳定 service bridge 时，Go 启动的 Core 子进程不会自动结束；新
+bridge 启动的新 Core 因锁冲突立即退出。RC12 的轮询只能等待并报告这个失败，不能修复
+进程生命周期，因此 RC12 保持 Draft 且 npm 未发布。
+
+RC13 的根因修复：
+
+- Windows service bridge 把版本化 Core 加入 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` Job
+  Object；Task Scheduler 结束 bridge 时，系统同时终止 Core；
+- Windows 集成回归真实启动 bridge 测试父进程和长驻子进程，强制结束父进程后验证子
+  进程句柄进入退出状态；
+- 为恢复 RC12 以前已经遗留的孤儿进程，bootstrap 在删除任务后读取受限大小的常规
+  `service.lock`，通过 CIM 核对 PID 的可执行文件必须是允许的 managed Core，且命令行
+  必须精确以 `service run --foreground` 结束，才用 `taskkill /T /F` 终止并删除旧锁；
+- 任务已缺失时仍执行孤儿恢复；PID 已不存在时只删除旧锁；身份不匹配时拒绝终止并保留
+  锁。回归测试覆盖恢复与拒绝路径。
+
 ## 实机矩阵
 
 | 场景 | macOS | Windows | Linux | WSL / SSH / Container |
 | --- | --- | --- | --- | --- |
 | 飞书 user/bot 一次性绑定 | 既有 bot 通道直接发送通过；一次性绑定与 user 模式待验 | 待验 | 待验 | Host 绑定后复用，待验 |
 | 设置/模板/免打扰/多通道 | 待验 | 待验 | 待验 | Host policy，待验 |
-| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | 损坏 RC9→RC10 Draft 与半安装同版本修复通过；RC11 实机发现启动状态竞态，RC12 待最终 Draft 复验 | 待验 | shim 独立升级，待验 |
+| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | 损坏 RC9→RC10 Draft 与半安装同版本修复通过；RC12 实机定位孤儿 Core 根因，RC13 待最终 Draft 复验 | 待验 | shim 独立升级，待验 |
 | Codex/Claude/Kimi stable Hook | Codex 0.146、Claude Code 2.0.19、Kimi Code 均由新任务/会话取得 generation 2 `task.completed` proof；Desktop/IDE Surface 矩阵仍待验 | 待验 | 待验 | 按产品运行位置待验 |
 | 登录服务重启/断网恢复 | LaunchAgent 升级/回滚重启与两次后台飞书投递通过；断网待验 | 待验 | 待验 | 待验 |
 | WSL host-pull，无 listener | 不适用 | 待验 | 不适用 | 待验 |

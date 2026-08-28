@@ -1,6 +1,6 @@
 {
   "name": "agentbell",
-  "version": "0.3.0-rc.12",
+  "version": "0.3.0-rc.13",
   "description": "Send OpenCode lifecycle notifications to Feishu through AgentBell and lark-cli.",
   "keywords": [
     "notifications",

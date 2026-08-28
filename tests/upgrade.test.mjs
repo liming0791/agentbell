@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import {
   lstat,
   mkdir,
@@ -189,6 +191,109 @@ test("Windows upgrade quiesce removes the task without the active Core", async (
   });
   assert.equal(absentCalls.length, 1);
   assert.equal(absentCalls[0].args[0], "/Query");
+});
+
+test("Windows upgrade quiesce removes a verified orphan service Core", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const stateDir = path.join(dataRoot, "state");
+  const lockPath = path.join(stateDir, "queue", "service.lock");
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, JSON.stringify({
+    pid: 4242,
+    heartbeat: "2026-08-28T00:00:00Z"
+  }));
+  const corePath = `C:\\Users\\test\\AgentBell\\0.3.0-rc.12\\agentbell.exe`;
+  const calls = [];
+  let inspections = 0;
+  await runUpgradeServiceQuiesce({ stateDir, corePath }, async (
+    executable,
+    args,
+    stdio
+  ) => {
+    calls.push({ executable, args, stdio });
+    return executable === "schtasks.exe" ? 1 : 0;
+  }, async (pid) => {
+    assert.equal(pid, 4242);
+    inspections += 1;
+    return inspections === 1
+      ? {
+          executablePath: corePath.toLowerCase(),
+          commandLine: `"${corePath}" service run --foreground`
+        }
+      : null;
+  });
+
+  assert.deepEqual(calls.map(({ executable }) => executable), [
+    "schtasks.exe",
+    "taskkill.exe"
+  ]);
+  assert.deepEqual(calls[1].args, ["/PID", "4242", "/T", "/F"]);
+  await assert.rejects(lstat(lockPath), /ENOENT/);
+});
+
+test("Windows upgrade quiesce refuses an unverified lock PID", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const stateDir = path.join(dataRoot, "state");
+  const lockPath = path.join(stateDir, "queue", "service.lock");
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, JSON.stringify({
+    pid: 4343,
+    heartbeat: "2026-08-28T00:00:00Z"
+  }));
+  const calls = [];
+  await assert.rejects(runUpgradeServiceQuiesce({
+    stateDir,
+    corePath: `C:\\Users\\test\\AgentBell\\0.3.0-rc.12\\agentbell.exe`
+  }, async (executable, args) => {
+    calls.push({ executable, args });
+    return 1;
+  }, async () => ({
+    executablePath: `C:\\Windows\\System32\\notepad.exe`,
+    commandLine: "notepad.exe"
+  })), /refuse to terminate unverified/);
+
+  assert.deepEqual(calls.map(({ executable }) => executable), ["schtasks.exe"]);
+  assert.equal((await lstat(lockPath)).isFile(), true);
+});
+
+test("Windows upgrade quiesce terminates a real verified orphan", {
+  skip: process.platform !== "win32"
+}, async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const stateDir = path.join(dataRoot, "state");
+  const lockPath = path.join(stateDir, "queue", "service.lock");
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  const orphan = spawn(process.execPath, [
+    "-e",
+    "setInterval(() => {}, 1000)",
+    "service",
+    "run",
+    "--foreground"
+  ], {
+    windowsHide: true,
+    stdio: "ignore"
+  });
+  context.after(() => {
+    if (orphan.exitCode === null) {
+      orphan.kill();
+    }
+  });
+  await writeFile(lockPath, JSON.stringify({
+    pid: orphan.pid,
+    heartbeat: "2026-08-28T00:00:00Z"
+  }));
+
+  await runUpgradeServiceQuiesce({
+    taskName: `\\AgentBell\\AgentBell-Orphan-Test-${process.pid}`,
+    stateDir,
+    corePath: process.execPath
+  });
+  if (orphan.exitCode === null) {
+    await once(orphan, "close");
+  }
+
+  assert.notEqual(orphan.exitCode, null);
+  await assert.rejects(lstat(lockPath), /ENOENT/);
 });
 
 function releaseBundle(version) {
