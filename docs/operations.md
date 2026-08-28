@@ -11,13 +11,13 @@ Qoder / QoderWork / TRAE Adapter、三平台登录自启动及当前 M2 命令�
 Publisher。PowerShell：
 
 ```powershell
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.10
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.11
 ```
 
 macOS/Linux：
 
 ```bash
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.10
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.11
 ```
 
 bootstrap 先下载 `checksums.txt`，校验 SHA-256 后才把
@@ -136,7 +136,7 @@ agentbell test --channel team --json
 
 ## M2 Technical Preview 命令
 
-RC10 可以在隔离数据目录中使用本机设置、一次性绑定和 stable bridge：
+RC11 可以在隔离数据目录中使用本机设置、一次性绑定和 stable bridge：
 
 ```text
 agentbell settings show --effective --json
@@ -205,13 +205,16 @@ bridge；失败会移除新 active pointer，并由旧 Core 重装 legacy servic
 保留当前协议版本的 stable bridge，继续验证其独立 checksum，并只重启服务；若目标
 pre-M2 Core 不能解析当前配置，Hook 仍使用旧 active Core，`service-v1` 使用 active
 state 中 checksum 校验的当前 M2 service Core。
-Windows 升级在替换 `agentbell-bridge.exe` / `agentbell-service.exe` 前，会通过当前 Core
-停用并移除 AgentBell 自己的登录任务，清理名称严格匹配
+Windows 升级在替换 `agentbell-bridge.exe` / `agentbell-service.exe` 前，由 npm
+bootstrap 直接通过 Task Scheduler 停用并移除 AgentBell 自己的登录任务，不依赖可能
+已损坏或缺失稳定入口的旧 Core。随后清理名称严格匹配
 `.agentbell-*.exe.<pid>.<16-hex>.tmp.previous` 的历史升级残留，再写入新稳定入口并由新
 Core 重新安装、启动和验证任务。若停服后的任一步失败，补偿会再次停用可能已启动的
 新任务、恢复旧入口与 active state，并用旧 Core 重新安装旧服务。Windows 对短暂
 `EPERM` / sharing violation 的重命名和清理另有有界重试；不会删除不符合精确命名规则
-的文件。稳定 Hook 命令未变化的普通 Core 升级不要求 Codex 重新信任。
+的文件。缓存版本只有 Core 与 `install.json` 均通过 Release checksum/metadata 校验才会
+复用；若 Core 精确匹配但中断清理只留下缺失的元数据，bootstrap 会重建 `install.json`。
+稳定 Hook 命令未变化的普通 Core 升级不要求 Codex 重新信任。
 Technical Preview 默认只在隔离数据目录执行 `--dry-run` 或自动 fixture；真实安装的
 非 dry-run 升级必须先备份平台服务定义、受管 `bin/` 和当前 Core，并取得明确授权。
 

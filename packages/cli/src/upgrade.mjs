@@ -26,6 +26,7 @@ const journalSchemaVersion = 1;
 const bridgeProtocolVersion = "v1";
 const lockTimeoutMs = 10_000;
 const lockStaleMs = 60_000;
+const windowsServiceTaskName = "\\AgentBell\\AgentBell";
 const versionPattern =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const checksumPattern = /^[a-f0-9]{64}$/;
@@ -1071,14 +1072,28 @@ export async function runUpgradeServiceQuiesce(
   request,
   execute = runExecutable
 ) {
-  const code = await execute(
-    request.corePath,
-    ["service", "uninstall", "--json"],
+  const taskName = request.taskName || windowsServiceTaskName;
+  const queryCode = await execute(
+    "schtasks.exe",
+    ["/Query", "/TN", taskName],
+    { stdin: "ignore", stdout: "ignore", stderr: "ignore" }
+  );
+  if (queryCode !== 0) {
+    return;
+  }
+  await execute(
+    "schtasks.exe",
+    ["/End", "/TN", taskName],
+    { stdin: "ignore", stdout: "ignore", stderr: "ignore" }
+  );
+  const deleteCode = await execute(
+    "schtasks.exe",
+    ["/Delete", "/TN", taskName, "/F"],
     { stdin: "ignore", stdout: "ignore", stderr: "inherit" }
   );
-  if (code !== 0) {
+  if (deleteCode !== 0) {
     throw new Error(
-      `AgentBell service uninstall exited with code ${code}.`
+      `AgentBell Windows task removal exited with code ${deleteCode}.`
     );
   }
 }
@@ -1413,26 +1428,7 @@ async function installVersion({
 }) {
   const destination = path.dirname(installedCorePath(dataRoot, version, platform));
   await rejectSymlinkIfPresent(destination, "managed version directory");
-  try {
-    const existing = await readFile(path.join(destination, executableName(platform)));
-    if (checksum(existing) !== bundle.coreChecksum) {
-      throw new Error(`Installed Core ${version} conflicts with the release checksum.`);
-    }
-    return false;
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
-    }
-  }
-  const staging = path.join(
-    transactionDirectory(dataRoot),
-    `${transaction.id}.stage`
-  );
-  await rm(staging, { recursive: true, force: true });
-  await mkdir(staging, { recursive: true, mode: 0o700 });
-  const stagedCore = path.join(staging, executableName(platform));
-  await atomicWrite(stagedCore, bundle.core, 0o700);
-  await atomicJSON(path.join(staging, "install.json"), {
+  const metadata = {
     schemaVersion: 1,
     version,
     target: target.id,
@@ -1449,7 +1445,49 @@ async function installVersion({
     installedAt: new Date().toISOString(),
     signatureStatus: bundle.signatureStatus,
     transactionId: transaction.id
-  });
+  };
+  try {
+    const existing = await readFile(path.join(destination, executableName(platform)));
+    if (checksum(existing) !== bundle.coreChecksum) {
+      throw new Error(`Installed Core ${version} conflicts with the release checksum.`);
+    }
+    try {
+      const cached = await installedMetadata(
+        dataRoot,
+        version,
+        platform,
+        target
+      );
+      if (cached.legacy ||
+          cached.metadata.checksum !== bundle.coreChecksum ||
+          cached.metadata.bridgeChecksum !== bundle.bridgeChecksum ||
+          cached.metadata.serviceBridgeChecksum !== bundle.serviceBridgeChecksum) {
+        throw new Error(
+          `Installed Core ${version} conflicts with the release metadata.`
+        );
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+      await atomicJSON(path.join(destination, "install.json"), metadata);
+    }
+    return false;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await rm(destination, { recursive: true, force: true });
+  const staging = path.join(
+    transactionDirectory(dataRoot),
+    `${transaction.id}.stage`
+  );
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true, mode: 0o700 });
+  const stagedCore = path.join(staging, executableName(platform));
+  await atomicWrite(stagedCore, bundle.core, 0o700);
+  await atomicJSON(path.join(staging, "install.json"), metadata);
   await rename(staging, destination);
   await syncDirectory(path.dirname(destination));
   return true;
@@ -1849,56 +1887,65 @@ export async function upgrade({
       );
     }
     if (active?.activeVersion === toVersion) {
-      const installed = await installedMetadata(
-        dataRoot,
-        toVersion,
-        platform,
-        target
-      );
-      if (installed.legacy ||
-          installed.metadata.checksum !== active.checksum ||
-          installed.metadata.bridgeChecksum !== active.bridgeChecksum ||
-          installed.metadata.serviceBridgeChecksum !== active.serviceBridgeChecksum) {
-        throw new Error(
-          `Active AgentBell version ${toVersion} conflicts with its install metadata.`
+      let installed = null;
+      try {
+        installed = await installedMetadata(
+          dataRoot,
+          toVersion,
+          platform,
+          target
         );
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          throw error;
+        }
       }
-      bridgePath = stableBridgePath({ dataRoot, platform });
-      await rejectSymlinkIfPresent(
-        path.dirname(bridgePath),
-        "stable bridge directory"
-      );
-      previousBridge = await readOptional(bridgePath);
-      serviceBridgePath = stableServiceBridgePath({ dataRoot, platform });
-      previousServiceBridge = target.serviceBridgeFileName
-        ? await readOptional(serviceBridgePath)
-        : previousBridge;
-      const serviceBridgeReady = !target.serviceBridgeFileName || (
-        previousServiceBridge !== null &&
-        checksum(previousServiceBridge) === active.serviceBridgeChecksum
-      );
-      if (previousBridge !== null &&
-          checksum(previousBridge) === active.bridgeChecksum &&
-          serviceBridgeReady) {
-        await restartService({
-          operation: "repair",
-          corePath: installed.corePath,
-          bridgePath,
-          active,
-          previousActive: active
-        });
-        return {
-          dryRun: false,
-          reused: true,
-          repaired: false,
-          activeVersion: toVersion,
-          previousVersion: active.previousVersion || "",
-          generation: active.generation,
-          transactionId: active.transactionId,
-          corePath: installed.corePath,
-          bridgePath,
-          rolledBack: false
-        };
+      if (installed) {
+        if (installed.legacy ||
+            installed.metadata.checksum !== active.checksum ||
+            installed.metadata.bridgeChecksum !== active.bridgeChecksum ||
+            installed.metadata.serviceBridgeChecksum !== active.serviceBridgeChecksum) {
+          throw new Error(
+            `Active AgentBell version ${toVersion} conflicts with its install metadata.`
+          );
+        }
+        bridgePath = stableBridgePath({ dataRoot, platform });
+        await rejectSymlinkIfPresent(
+          path.dirname(bridgePath),
+          "stable bridge directory"
+        );
+        previousBridge = await readOptional(bridgePath);
+        serviceBridgePath = stableServiceBridgePath({ dataRoot, platform });
+        previousServiceBridge = target.serviceBridgeFileName
+          ? await readOptional(serviceBridgePath)
+          : previousBridge;
+        const serviceBridgeReady = !target.serviceBridgeFileName || (
+          previousServiceBridge !== null &&
+          checksum(previousServiceBridge) === active.serviceBridgeChecksum
+        );
+        if (previousBridge !== null &&
+            checksum(previousBridge) === active.bridgeChecksum &&
+            serviceBridgeReady) {
+          await restartService({
+            operation: "repair",
+            corePath: installed.corePath,
+            bridgePath,
+            active,
+            previousActive: active
+          });
+          return {
+            dryRun: false,
+            reused: true,
+            repaired: false,
+            activeVersion: toVersion,
+            previousVersion: active.previousVersion || "",
+            generation: active.generation,
+            transactionId: active.transactionId,
+            corePath: installed.corePath,
+            bridgePath,
+            rolledBack: false
+          };
+        }
       }
       repairingSameVersion = true;
     }
