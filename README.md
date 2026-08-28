@@ -11,7 +11,7 @@ AgentBell 是一个面向 Coding Agent CLI、IDE 和 Desktop Agent 的跨平台�
 审批提醒；完成通知继续使用 `Stop`。
 
 最新已发布版本为
-[`v0.3.0-rc.13`](https://github.com/liming0791/agentbell/releases/tag/v0.3.0-rc.13)
+[`v0.3.0-rc.14`](https://github.com/liming0791/agentbell/releases/tag/v0.3.0-rc.14)
 Technical Preview。该版本已包含 Go 单文件 Core、持久队列、七个 Adapter、
 `agentbell setup`、`agentbell test`、三平台用户服务及 M2 本地能力
 （见 [M1 验收记录](./docs/m1-setup-validation.md) 和
@@ -23,9 +23,10 @@ RC7 增加 Core/Bridge/Service 安装状态对账，可从 Bridge 或后台服�
 RC8/RC9 修复 Windows Codex Hook 的 `cmd.exe /C` 命令兼容性并拆分无窗口后台 Service；
 RC10 Draft 暴露了旧 Core 损坏时无法完成停服以及半安装目录被复用的问题，未公开；
 RC11 Draft 改由 bootstrap 直接停用 AgentBell 计划任务并修复半安装恢复；RC12 Draft
-增加启动状态轮询，但 Windows 实机证明 `/End` 只结束 bridge、会留下持锁的孤儿 Core，
-两版均未公开。RC13 用 kill-on-close Job Object 绑定 bridge 与 Core 生命周期，并让
-升级器只终止路径和命令行均精确匹配的旧孤儿服务进程。
+增加启动状态轮询；RC13 Draft 用 kill-on-close Job Object 绑定 bridge 与 Core 并恢复
+旧孤儿进程。Windows 最终重启门禁又发现强制终止留下的新鲜服务锁和多 PowerShell 等待
+超时，三版均未公开；RC14 通过 PID 存活检查立即回收死进程锁，并在单个 PowerShell
+进程内完成最多五秒的任务状态轮询。
 仓库与 Release 均公开，npm bootstrap 可匿名下载原生 Core；Node.js Hook runtime
 仅保留为 M0 迁移期原型，不是正式 Hook 数据面。
 
@@ -110,7 +111,7 @@ agentbell adapter uninstall all [--dry-run]
 agentbell uninstall [--dry-run] [--json] [--delete-remote-credential --confirm-delete-remote-credential]
 ```
 
-RC13 包含 M2 的一次性绑定、完整 Channel 事务、stable Hook/Service bridge、
+RC14 包含 M2 的一次性绑定、完整 Channel 事务、stable Hook/Service bridge、
 `service restart`、Hook 冲突审计、受 sidecar/部分投递账本保护的 upgrade/rollback、
 `plugin verify` 与 Release keyless 插件签名，以及 relay pairing/ingress、远端
 metadata-only outbox、`remote test`、独立 Host connector registry、WSL/SSH/container
@@ -126,7 +127,7 @@ macOS 真实 M1 形态的 LaunchAgent 也已备份后迁移到 stable bridge，�
 ## 目标体验
 
 ```bash
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.13
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.14
 npx @liming0791/agentbell-cli@next setup
 ```
 

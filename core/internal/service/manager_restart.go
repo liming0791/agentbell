@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 )
 
 const (
-	windowsTaskStateScript              = `$task = Get-ScheduledTask -TaskPath '\AgentBell\' -TaskName 'AgentBell'; [Console]::Out.Write($task.State)`
-	defaultWindowsTaskStartAttempts     = 51
-	defaultWindowsTaskStartPollInterval = 100 * time.Millisecond
+	windowsTaskStateScript     = `$task = Get-ScheduledTask -TaskPath '\AgentBell\' -TaskName 'AgentBell'; [Console]::Out.Write($task.State)`
+	windowsTaskWaitStateScript = `$deadline = [DateTime]::UtcNow.AddSeconds(5); do { $task = Get-ScheduledTask -TaskPath '\AgentBell\' -TaskName 'AgentBell'; $state = [string]$task.State; if ($state -eq 'Running') { break }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline); [Console]::Out.Write($state)`
 )
 
 func (manager *Manager) restartLaunchAgent(
@@ -142,46 +140,15 @@ func (manager *Manager) restartWindowsTask(
 }
 
 func (manager *Manager) waitWindowsTaskRunning(ctx context.Context) (string, error) {
-	attempts := manager.windowsTaskStartAttempts
-	if attempts <= 0 {
-		attempts = defaultWindowsTaskStartAttempts
+	output, err := manager.runner().Run(
+		ctx,
+		"powershell.exe",
+		windowsTaskWaitStateArgs()...,
+	)
+	if err != nil {
+		return "", err
 	}
-	interval := manager.windowsTaskStartPollInterval
-	if interval <= 0 && manager.windowsTaskStartAttempts <= 0 {
-		interval = defaultWindowsTaskStartPollInterval
-	}
-
-	state := ""
-	for attempt := 0; attempt < attempts; attempt++ {
-		output, err := manager.runner().Run(
-			ctx,
-			"powershell.exe",
-			windowsTaskStateArgs()...,
-		)
-		if err != nil {
-			return state, err
-		}
-		state = strings.TrimSpace(string(output))
-		if strings.EqualFold(state, "Running") {
-			return state, nil
-		}
-		if attempt+1 == attempts || interval <= 0 {
-			continue
-		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return state, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	return state, nil
+	return strings.TrimSpace(string(output)), nil
 }
 
 func windowsTaskStateArgs() []string {
@@ -193,6 +160,19 @@ func windowsTaskStateArgs() []string {
 	}
 }
 
+func windowsTaskWaitStateArgs() []string {
+	return []string{
+		"-NoProfile",
+		"-NonInteractive",
+		"-Command",
+		windowsTaskWaitStateScript,
+	}
+}
+
 func windowsStateCallKey() string {
 	return "powershell.exe " + strings.Join(windowsTaskStateArgs(), " ")
+}
+
+func windowsWaitStateCallKey() string {
+	return "powershell.exe " + strings.Join(windowsTaskWaitStateArgs(), " ")
 }

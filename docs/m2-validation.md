@@ -648,13 +648,34 @@ RC13 的根因修复：
 - 任务已缺失时仍执行孤儿恢复；PID 已不存在时只删除旧锁；身份不匹配时拒绝终止并保留
   锁。回归测试覆盖恢复与拒绝路径。
 
+RC13 的自动
+[stage](https://github.com/liming0791/agentbell/actions/runs/33162305821) 与 RC9→RC13
+[lifecycle](https://github.com/liming0791/agentbell/actions/runs/33162623255) 均通过，仍未直接
+公开。Windows 最终实机从 `Ready`、`Last Result=1`、RC10 孤儿 PID 15776 持锁状态成功
+升级 RC13：旧 PID 被清除，generation 13，任务 `Running`，bridge/Core 父子进程关系
+正确，`service status.running=true`、`bridge doctor.healthy=true`，Codex `hooks.json`
+SHA-256 不变。
+
+随后真实 `service restart` 发现 Job Object 强制终止 Core 时不会执行锁释放 `defer`，新鲜
+`service.lock` 会短暂保留；新 Core 因而立即退出 1。RC12 的 Go 轮询又为每次状态检查
+重新启动 PowerShell，51 次并不等于实际五秒，失败时 CLI 会长时间等待。RC13 因此保持
+Draft 且 npm 未发布。RC14 的修复与门禁：
+
+- 服务锁仍新鲜时解析记录并检查 PID 是否存活；活进程继续拒绝第二实例，死 PID 立即
+  删除并重建锁，不再固定等待 15 秒；Windows 使用受限进程句柄，Linux/macOS 使用
+  signal 0；
+- Task Scheduler 的启动验证改为单个 PowerShell 进程内部每 100ms 检查一次，最多五秒；
+  普通 `service status` 仍只查询一次；
+- 回归测试覆盖活进程锁拒绝、死 PID 新鲜锁立即恢复，以及等待脚本的五秒上限和单进程
+  结构。
+
 ## 实机矩阵
 
 | 场景 | macOS | Windows | Linux | WSL / SSH / Container |
 | --- | --- | --- | --- | --- |
 | 飞书 user/bot 一次性绑定 | 既有 bot 通道直接发送通过；一次性绑定与 user 模式待验 | 待验 | 待验 | Host 绑定后复用，待验 |
 | 设置/模板/免打扰/多通道 | 待验 | 待验 | 待验 | Host policy，待验 |
-| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | 损坏 RC9→RC10 Draft 与半安装同版本修复通过；RC12 实机定位孤儿 Core 根因，RC13 待最终 Draft 复验 | 待验 | shim 独立升级，待验 |
+| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | RC13 已从真实 RC10 孤儿状态升级成功并定位 restart 新鲜锁；RC14 待最终 Draft 复验 | 待验 | shim 独立升级，待验 |
 | Codex/Claude/Kimi stable Hook | Codex 0.146、Claude Code 2.0.19、Kimi Code 均由新任务/会话取得 generation 2 `task.completed` proof；Desktop/IDE Surface 矩阵仍待验 | 待验 | 待验 | 按产品运行位置待验 |
 | 登录服务重启/断网恢复 | LaunchAgent 升级/回滚重启与两次后台飞书投递通过；断网待验 | 待验 | 待验 | 待验 |
 | WSL host-pull，无 listener | 不适用 | 待验 | 不适用 | 待验 |
