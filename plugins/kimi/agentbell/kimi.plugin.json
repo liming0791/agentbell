@@ -1,6 +1,6 @@
 {
   "name": "agentbell",
-  "version": "0.3.0-rc.14",
+  "version": "0.3.0-rc.15",
   "description": "Send Kimi Code CLI lifecycle notifications to Feishu through AgentBell and lark-cli.",
   "keywords": [
     "notifications",

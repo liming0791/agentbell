@@ -63,6 +63,7 @@ type Manager struct {
 	HomeDir          string
 	ConfigDir        string
 	LogDir           string
+	StateDir         string
 	LarkCLIPath      string
 	UID              string
 	Runner           ManagerRunner

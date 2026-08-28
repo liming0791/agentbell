@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 const (
 	windowsTaskStateScript     = `$task = Get-ScheduledTask -TaskPath '\AgentBell\' -TaskName 'AgentBell'; [Console]::Out.Write($task.State)`
 	windowsTaskWaitStateScript = `$deadline = [DateTime]::UtcNow.AddSeconds(5); do { $task = Get-ScheduledTask -TaskPath '\AgentBell\' -TaskName 'AgentBell'; $state = [string]$task.State; if ($state -eq 'Running') { break }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline); [Console]::Out.Write($state)`
+	windowsTaskQuiesceScript   = `$deadline = [DateTime]::UtcNow.AddSeconds(5); do { $task = Get-ScheduledTask -TaskPath '\AgentBell\' -TaskName 'AgentBell'; $state = [string]$task.State; $lockOwnerAlive = $false; if (Test-Path -LiteralPath $LockPath) { try { $record = Get-Content -Raw -LiteralPath $LockPath | ConvertFrom-Json; $lockOwnerPid = [int]$record.pid; if ($lockOwnerPid -gt 0) { $lockOwnerAlive = $null -ne (Get-Process -Id $lockOwnerPid -ErrorAction SilentlyContinue) } } catch { $lockOwnerAlive = $true } }; if ($state -ne 'Running' -and -not $lockOwnerAlive) { break }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline); if ($state -eq 'Running' -or $lockOwnerAlive) { [Console]::Error.Write("task state=$state lockOwnerAlive=$lockOwnerAlive"); exit 1 }`
 )
 
 func (manager *Manager) restartLaunchAgent(
@@ -114,6 +116,9 @@ func (manager *Manager) restartWindowsTask(
 		"/TN",
 		windowsTaskName,
 	)
+	if err := manager.waitWindowsTaskQuiesced(ctx); err != nil {
+		return result, fmt.Errorf("wait for AgentBell Windows task to stop: %w", err)
+	}
 	if _, err := manager.runner().Run(
 		ctx,
 		"schtasks.exe",
@@ -137,6 +142,19 @@ func (manager *Manager) restartWindowsTask(
 	result.Changed = true
 	result.Message = "AgentBell Windows logon task was safely restarted and verified"
 	return result, nil
+}
+
+func (manager *Manager) waitWindowsTaskQuiesced(ctx context.Context) error {
+	if manager.StateDir == "" || !absoluteFor("windows", manager.StateDir) {
+		return errors.New("AgentBell Windows service state path is incomplete")
+	}
+	lockPath := filepath.Join(manager.StateDir, "queue", "service.lock")
+	_, err := manager.runner().Run(
+		ctx,
+		"powershell.exe",
+		windowsTaskQuiesceArgs(lockPath)...,
+	)
+	return err
 }
 
 func (manager *Manager) waitWindowsTaskRunning(ctx context.Context) (string, error) {
@@ -169,10 +187,29 @@ func windowsTaskWaitStateArgs() []string {
 	}
 }
 
+func windowsTaskQuiesceArgs(lockPath string) []string {
+	script := "$LockPath = " + powershellSingleQuoted(lockPath) + "; " +
+		windowsTaskQuiesceScript
+	return []string{
+		"-NoProfile",
+		"-NonInteractive",
+		"-Command",
+		script,
+	}
+}
+
+func powershellSingleQuoted(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
 func windowsStateCallKey() string {
 	return "powershell.exe " + strings.Join(windowsTaskStateArgs(), " ")
 }
 
 func windowsWaitStateCallKey() string {
 	return "powershell.exe " + strings.Join(windowsTaskWaitStateArgs(), " ")
+}
+
+func windowsQuiesceCallKey(lockPath string) string {
+	return "powershell.exe " + strings.Join(windowsTaskQuiesceArgs(lockPath), " ")
 }

@@ -212,6 +212,8 @@ func TestManagerRestartSystemdAndVerifiesActive(t *testing.T) {
 }
 
 func TestManagerRestartWindowsTaskAndVerifiesRunning(t *testing.T) {
+	stateDir := `C:\Users\test\AppData\Local\AgentBell\state`
+	lockPath := filepath.Join(stateDir, "queue", "service.lock")
 	runner := &restartRunner{
 		errs: map[string]error{},
 		outputs: map[string][]byte{
@@ -223,6 +225,7 @@ func TestManagerRestartWindowsTaskAndVerifiesRunning(t *testing.T) {
 		Executable: `C:\Program Files\AgentBell\agentbell.exe`,
 		HomeDir:    `C:\Users\test`,
 		LogDir:     `C:\Users\test\AppData\Local\AgentBell\logs`,
+		StateDir:   stateDir,
 		Runner:     runner,
 	}
 	restarted, err := manager.Restart(context.Background())
@@ -236,6 +239,7 @@ func TestManagerRestartWindowsTaskAndVerifiesRunning(t *testing.T) {
 	want := []string{
 		`schtasks.exe /Query /TN \AgentBell\AgentBell`,
 		`schtasks.exe /End /TN \AgentBell\AgentBell`,
+		windowsQuiesceCallKey(lockPath),
 		`schtasks.exe /Run /TN \AgentBell\AgentBell`,
 		windowsWaitStateCallKey(),
 	}
@@ -243,6 +247,19 @@ func TestManagerRestartWindowsTaskAndVerifiesRunning(t *testing.T) {
 		t.Fatalf("unexpected restart calls: %#v", got)
 	}
 
+	runner.calls = nil
+	runner.errs[windowsQuiesceCallKey(lockPath)] = errors.New("old Core still running")
+	if _, err := manager.Restart(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "wait for AgentBell Windows task to stop") {
+		t.Fatalf("expected Windows quiesce error, got %v", err)
+	}
+	for _, call := range runner.calls {
+		if callKeyForManager(call) == `schtasks.exe /Run /TN \AgentBell\AgentBell` {
+			t.Fatalf("Windows task restarted before the old Core exited: %#v", runner.calls)
+		}
+	}
+
+	delete(runner.errs, windowsQuiesceCallKey(lockPath))
 	runner.calls = nil
 	runner.outputs[windowsWaitStateCallKey()] = []byte("Ready")
 	if _, err := manager.Restart(context.Background()); err == nil ||
@@ -263,6 +280,25 @@ func TestWindowsTaskWaitScriptIsBoundedInOnePowerShell(t *testing.T) {
 	}
 	if strings.Contains(windowsTaskStateScript, "Start-Sleep") {
 		t.Fatal("ordinary Windows task status unexpectedly polls")
+	}
+	for _, expected := range []string{
+		"AddSeconds(5)",
+		"Start-Sleep -Milliseconds 100",
+		"Get-Process -Id $lockOwnerPid",
+		"$state -ne 'Running' -and -not $lockOwnerAlive",
+	} {
+		if !strings.Contains(windowsTaskQuiesceScript, expected) {
+			t.Fatalf("Windows task quiesce script missing %q", expected)
+		}
+	}
+	quotedPath := `C:\Users\Agent'Bell\state\queue\service.lock`
+	quiesceArgs := windowsTaskQuiesceArgs(quotedPath)
+	if len(quiesceArgs) != 4 ||
+		!strings.Contains(
+			quiesceArgs[3],
+			`$LockPath = 'C:\Users\Agent''Bell\state\queue\service.lock';`,
+		) {
+		t.Fatalf("Windows lock path was not safely embedded: %#v", quiesceArgs)
 	}
 }
 
