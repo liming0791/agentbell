@@ -66,6 +66,28 @@ func (ExecRunner) Run(
 	return command.Run()
 }
 
+func (ExecRunner) RunService(
+	ctx context.Context,
+	executable string,
+	args []string,
+	input []byte,
+	stdout io.Writer,
+	stderr io.Writer,
+) error {
+	return runServiceChild(ctx, executable, args, input, stdout, stderr)
+}
+
+type serviceRunner interface {
+	RunService(
+		context.Context,
+		string,
+		[]string,
+		[]byte,
+		io.Writer,
+		io.Writer,
+	) error
+}
+
 type App struct {
 	Store          installstate.Store
 	Runner         Runner
@@ -186,7 +208,18 @@ func (app *App) runService(
 			return fmt.Errorf("resolve service Core: %w", err)
 		}
 	}
-	return app.runner().Run(
+	runner := app.runner()
+	if service, ok := runner.(serviceRunner); ok {
+		return service.RunService(
+			ctx,
+			corePath,
+			[]string{"service", "run", "--foreground"},
+			nil,
+			stdout,
+			stderr,
+		)
+	}
+	return runner.Run(
 		ctx,
 		corePath,
 		[]string{"service", "run", "--foreground"},

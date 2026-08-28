@@ -1,6 +1,6 @@
 # AgentBell 安装与运维
 
-最新已发布版本是 `v0.3.0-rc.12` Technical Preview，包含原生 Core、持久队列、
+最新已发布版本是 `v0.3.0-rc.13` Technical Preview，包含原生 Core、持久队列、
 `agentbell setup`、`agentbell test`、Codex / Claude Code / Kimi Code / OpenCode /
 Qoder / QoderWork / TRAE Adapter、三平台登录自启动及当前 M2 命令面。所有 Adapter
 仍为 Pilot；GUI 安装器、正式代码签名和 M2 完整实机矩阵仍属于后续发布阶段。
@@ -11,13 +11,13 @@ Qoder / QoderWork / TRAE Adapter、三平台登录自启动及当前 M2 命令�
 Publisher。PowerShell：
 
 ```powershell
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.12
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.13
 ```
 
 macOS/Linux：
 
 ```bash
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.12
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.13
 ```
 
 bootstrap 先下载 `checksums.txt`，校验 SHA-256 后才把
@@ -136,7 +136,7 @@ agentbell test --channel team --json
 
 ## M2 Technical Preview 命令
 
-RC12 可以在隔离数据目录中使用本机设置、一次性绑定和 stable bridge：
+RC13 可以在隔离数据目录中使用本机设置、一次性绑定和 stable bridge：
 
 ```text
 agentbell settings show --effective --json
