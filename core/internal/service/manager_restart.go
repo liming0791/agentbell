@@ -6,9 +6,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
-const windowsTaskStateScript = `$task = Get-ScheduledTask -TaskPath '\AgentBell\' -TaskName 'AgentBell'; [Console]::Out.Write($task.State)`
+const (
+	windowsTaskStateScript              = `$task = Get-ScheduledTask -TaskPath '\AgentBell\' -TaskName 'AgentBell'; [Console]::Out.Write($task.State)`
+	defaultWindowsTaskStartAttempts     = 51
+	defaultWindowsTaskStartPollInterval = 100 * time.Millisecond
+)
 
 func (manager *Manager) restartLaunchAgent(
 	ctx context.Context,
@@ -120,24 +125,63 @@ func (manager *Manager) restartWindowsTask(
 	); err != nil {
 		return result, fmt.Errorf("restart AgentBell Windows logon task: %w", err)
 	}
-	output, err := manager.runner().Run(
-		ctx,
-		"powershell.exe",
-		windowsTaskStateArgs()...,
-	)
+	state, err := manager.waitWindowsTaskRunning(ctx)
 	if err != nil {
 		return result, fmt.Errorf("verify AgentBell Windows task restart: %w", err)
 	}
-	if !strings.EqualFold(strings.TrimSpace(string(output)), "Running") {
+	if !strings.EqualFold(state, "Running") {
 		return result, fmt.Errorf(
 			"verify AgentBell Windows task restart: state is %q, not Running",
-			strings.TrimSpace(string(output)),
+			state,
 		)
 	}
 	result.Running = true
 	result.Changed = true
 	result.Message = "AgentBell Windows logon task was safely restarted and verified"
 	return result, nil
+}
+
+func (manager *Manager) waitWindowsTaskRunning(ctx context.Context) (string, error) {
+	attempts := manager.windowsTaskStartAttempts
+	if attempts <= 0 {
+		attempts = defaultWindowsTaskStartAttempts
+	}
+	interval := manager.windowsTaskStartPollInterval
+	if interval <= 0 && manager.windowsTaskStartAttempts <= 0 {
+		interval = defaultWindowsTaskStartPollInterval
+	}
+
+	state := ""
+	for attempt := 0; attempt < attempts; attempt++ {
+		output, err := manager.runner().Run(
+			ctx,
+			"powershell.exe",
+			windowsTaskStateArgs()...,
+		)
+		if err != nil {
+			return state, err
+		}
+		state = strings.TrimSpace(string(output))
+		if strings.EqualFold(state, "Running") {
+			return state, nil
+		}
+		if attempt+1 == attempts || interval <= 0 {
+			continue
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return state, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return state, nil
 }
 
 func windowsTaskStateArgs() []string {

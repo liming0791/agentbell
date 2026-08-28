@@ -601,7 +601,7 @@ bootstrap 仍无法 quiesce。失败补偿删除目标版本时又先删除 `ins
 Core EXE 被占用而留下只有 Core 的半安装目录；下一次尝试只检查 Core checksum，错误
 复用了缺失元数据的目录。RC10 因此保持 Draft，npm 未发布。
 
-RC11 bootstrap 的最终修复与门禁：
+RC11 bootstrap 的修复与门禁：
 
 - Windows 下载、校验和 Core smoke 完成后，bootstrap 直接以 `schtasks.exe` 查询、停止
   并删除 `\AgentBell\AgentBell`，不再依赖旧 Core 或 stable bridge 健康；
@@ -618,13 +618,22 @@ RC11 bootstrap 的最终修复与门禁：
   `Running`、`service status.running=true`、`bridge doctor.healthy=true`，Codex
   `hooks.json` SHA-256 前后相同。本次未修改 Hook 定义，不产生新的信任要求。
 
+RC11 的自动
+[stage](https://github.com/liming0791/agentbell/actions/runs/33159125165) 与 RC9→RC11
+[lifecycle](https://github.com/liming0791/agentbell/actions/runs/33159471204) 均通过，仍未直接
+公开。Windows 最终 Draft 实机从运行中的 RC10 升级 RC11 时，Task Scheduler 在
+`schtasks /Run` 返回后首次查询仍为 `Ready`；Core 的安装与补偿路径都只采样一次，因而
+把正常启动窗口误判为失败，RC11 保持 Draft 且 npm 未发布。RC12 将安装和重启统一改为
+约五秒、上下文可取消的有界轮询；仅观察到 `Running` 才报告成功，持续 `Ready` 仍明确
+失败。回归测试覆盖 `Ready → Running` 与持续 `Ready` 超时。
+
 ## 实机矩阵
 
 | 场景 | macOS | Windows | Linux | WSL / SSH / Container |
 | --- | --- | --- | --- | --- |
 | 飞书 user/bot 一次性绑定 | 既有 bot 通道直接发送通过；一次性绑定与 user 模式待验 | 待验 | 待验 | Host 绑定后复用，待验 |
 | 设置/模板/免打扰/多通道 | 待验 | 待验 | 待验 | Host policy，待验 |
-| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | 损坏 RC9→RC10 Draft 与半安装同版本修复通过；RC11 最终资产待发布后复验 | 待验 | shim 独立升级，待验 |
+| 安装、升级、自动回滚 | 真实上一 Release 安装、最终 Draft 升级和显式旧版回滚通过；自动失败补偿由故障测试覆盖 | 损坏 RC9→RC10 Draft 与半安装同版本修复通过；RC11 实机发现启动状态竞态，RC12 待最终 Draft 复验 | 待验 | shim 独立升级，待验 |
 | Codex/Claude/Kimi stable Hook | Codex 0.146、Claude Code 2.0.19、Kimi Code 均由新任务/会话取得 generation 2 `task.completed` proof；Desktop/IDE Surface 矩阵仍待验 | 待验 | 待验 | 按产品运行位置待验 |
 | 登录服务重启/断网恢复 | LaunchAgent 升级/回滚重启与两次后台飞书投递通过；断网待验 | 待验 | 待验 | 待验 |
 | WSL host-pull，无 listener | 不适用 | 待验 | 不适用 | 待验 |

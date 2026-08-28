@@ -1,6 +1,6 @@
 {
   "name": "@liming0791/agentbell-hook-runtime",
-  "version": "0.3.0-rc.11",
+  "version": "0.3.0-rc.12",
   "description": "Normalize Coding Agent hook events and deliver them through lark-cli.",
   "license": "MIT",
   "repository": {

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -67,6 +68,11 @@ type Manager struct {
 	UID              string
 	Runner           ManagerRunner
 	LookPath         func(string) (string, error)
+
+	// Tests can reduce the bounded Windows task-start polling window without
+	// changing the production defaults.
+	windowsTaskStartAttempts     int
+	windowsTaskStartPollInterval time.Duration
 }
 
 type ManagerResult struct {
@@ -527,18 +533,14 @@ func (manager *Manager) installWindowsTask(
 	); err != nil {
 		return result, fmt.Errorf("start AgentBell logon task: %w", err)
 	}
-	output, err := manager.runner().Run(
-		ctx,
-		"powershell.exe",
-		windowsTaskStateArgs()...,
-	)
+	state, err := manager.waitWindowsTaskRunning(ctx)
 	if err != nil {
 		return result, fmt.Errorf("verify AgentBell Windows task start: %w", err)
 	}
-	if !strings.EqualFold(strings.TrimSpace(string(output)), "Running") {
+	if !strings.EqualFold(state, "Running") {
 		return result, fmt.Errorf(
 			"verify AgentBell Windows task start: state is %q, not Running",
-			strings.TrimSpace(string(output)),
+			state,
 		)
 	}
 	result.Installed = true
