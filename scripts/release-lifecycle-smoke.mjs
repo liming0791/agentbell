@@ -478,6 +478,9 @@ export async function runReleaseLifecycleSmoke({
     stateDir,
     downloadBundle: async () => currentBundle,
     smokeCore,
+    // This harness uses an isolated data root and never installs a platform
+    // login service, so there is no real task to quiesce before bridge writes.
+    quiesceService: async () => {},
     restartService: trackRestart
   });
   await assertHooksUnchanged(hookSnapshots);

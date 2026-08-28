@@ -20,6 +20,7 @@ import {
   listVersions,
   resolveActiveCore,
   rollback,
+  runUpgradeServiceQuiesce,
   runUpgradeServiceTransition,
   serviceTransitionAction,
   stableBridgePath,
@@ -133,6 +134,28 @@ test("upgrade default service transition reconciles the stable bridge definition
   }, {
     executable: corePath,
     args: ["service", "install", "--json"],
+    stdio: {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "inherit"
+    }
+  }]);
+});
+
+test("Windows upgrade quiesce removes the old task through the active Core", async () => {
+  const calls = [];
+  const corePath = path.join("managed", "0.3.0-rc.9", "agentbell.exe");
+  await runUpgradeServiceQuiesce({ corePath }, async (executable, args, stdio) => {
+    calls.push({ executable, args, stdio });
+    return 0;
+  });
+  await assert.rejects(
+    runUpgradeServiceQuiesce({ corePath }, async () => 17),
+    /service uninstall exited with code 17/
+  );
+  assert.deepEqual(calls, [{
+    executable: corePath,
+    args: ["service", "uninstall", "--json"],
     stdio: {
       stdin: "ignore",
       stdout: "ignore",
@@ -407,6 +430,141 @@ test("Windows upgrade installs separate hook and background service entries", as
   assert.equal(install.serviceBridgeFileName,
     "agentbell-service-windows-amd64.exe");
   assert.equal(install.serviceBridgeChecksum, bundle.serviceBridgeChecksum);
+});
+
+test("Windows upgrade quiesces the old service before replacing locked bridges", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const base = {
+    dataRoot,
+    platform: "win32",
+    architecture: "x64",
+    smokeCore: async () => {},
+    restartService: async () => {}
+  };
+  await upgrade({
+    ...base,
+    toVersion: "0.3.0-rc.9",
+    downloadBundle: async () => windowsReleaseBundle("0.3.0-rc.9")
+  });
+
+  const bridgePath = stableBridgePath(base);
+  const bridgeDirectory = path.dirname(bridgePath);
+  const staleResidue = path.join(
+    bridgeDirectory,
+    ".agentbell-bridge.exe.31352.f525bf06ef75807e.tmp.previous"
+  );
+  const unrelatedFile = path.join(
+    bridgeDirectory,
+    ".agentbell-bridge.exe.unrelated.tmp.previous"
+  );
+  await writeFile(staleResidue, "locked-old-bridge");
+  await writeFile(unrelatedFile, "preserve-me");
+
+  let serviceRunning = true;
+  const operations = [];
+  const bundle = windowsReleaseBundle("0.3.0-rc.10");
+  const upgraded = await upgrade({
+    ...base,
+    toVersion: "0.3.0-rc.10",
+    downloadBundle: async () => bundle,
+    quiesceService: async ({ corePath }) => {
+      operations.push(["quiesce", corePath]);
+      serviceRunning = false;
+    },
+    writeStableBridge: async (filePath, value) => {
+      if (serviceRunning) {
+        const error = new Error("simulated Windows executable lock");
+        error.code = "EPERM";
+        throw error;
+      }
+      operations.push(["replace", path.basename(filePath)]);
+      await writeFile(filePath, value);
+    },
+    restartService: async (request) => {
+      operations.push(["install", request.corePath]);
+      assert.equal(request.serviceQuiesced, true);
+      serviceRunning = true;
+    }
+  });
+
+  assert.equal(upgraded.activeVersion, "0.3.0-rc.10");
+  assert.equal(serviceRunning, true);
+  assert.deepEqual(await readFile(bridgePath), bundle.bridge);
+  assert.deepEqual(
+    await readFile(stableServiceBridgePath(base)),
+    bundle.serviceBridge
+  );
+  await assert.rejects(readFile(staleResidue), /ENOENT/);
+  assert.equal(await readFile(unrelatedFile, "utf8"), "preserve-me");
+  assert.deepEqual(
+    operations.map(([operation]) => operation),
+    ["quiesce", "replace", "replace", "install"]
+  );
+  assert.match(operations[0][1], /0\.3\.0-rc\.9[\\/]agentbell\.exe$/);
+  assert.match(operations[3][1], /0\.3\.0-rc\.10[\\/]agentbell\.exe$/);
+});
+
+test("Windows activation failure reinstalls the previous quiesced service", async (context) => {
+  const dataRoot = await temporaryDataRoot(context);
+  const base = {
+    dataRoot,
+    platform: "win32",
+    architecture: "x64",
+    smokeCore: async () => {},
+    restartService: async () => {}
+  };
+  await upgrade({
+    ...base,
+    toVersion: "0.3.0-rc.9",
+    downloadBundle: async () => windowsReleaseBundle("0.3.0-rc.9")
+  });
+  const before = await readFile(activeStatePath(dataRoot));
+  const quiesceCalls = [];
+  const restartCalls = [];
+
+  await assert.rejects(
+    upgrade({
+      ...base,
+      toVersion: "0.3.0-rc.10",
+      downloadBundle: async () => windowsReleaseBundle("0.3.0-rc.10"),
+      quiesceService: async (request) => {
+        quiesceCalls.push(request);
+      },
+      writeStableBridge: async () => {
+        const error = new Error("simulated Windows EPERM");
+        error.code = "EPERM";
+        throw error;
+      },
+      restartService: async (request) => {
+        restartCalls.push(request);
+      }
+    }),
+    /simulated Windows EPERM/
+  );
+
+  assert.equal(quiesceCalls.length, 2);
+  assert.equal(quiesceCalls[1].compensation, true);
+  assert.equal(restartCalls.length, 1);
+  assert.equal(restartCalls[0].compensation, true);
+  assert.equal(restartCalls[0].serviceQuiesced, true);
+  assert.equal(serviceTransitionAction(restartCalls[0]), "install");
+  assert.match(restartCalls[0].corePath, /0\.3\.0-rc\.9[\\/]agentbell\.exe$/);
+  assert.deepEqual(await readFile(activeStatePath(dataRoot)), before);
+  await assert.rejects(
+    lstat(path.join(dataRoot, "bin", "0.3.0-rc.10")),
+    /ENOENT/
+  );
+  const journals = await journalValues(dataRoot);
+  const failed = journals.find((journal) => journal.toVersion === "0.3.0-rc.10");
+  assert.equal(failed.status, "rolled-back");
+  assert.deepEqual(
+    failed.compensation.steps.map(({ action, status }) => [action, status]),
+    [
+      ["quiesce-attempted-service", "completed"],
+      ["restart-previous-service", "completed"],
+      ["remove-staged-version", "completed"]
+    ]
+  );
 });
 
 test("upgrade adopts one real M1 install and preserves rollback", async (context) => {
@@ -714,7 +872,16 @@ test("upgrade dry-run is read-only and rejects unsafe roots or bundles", async (
     }),
     /Core SHA-256 mismatch/
   );
+});
 
+test("upgrade rejects a symbolic-link data root", async (context) => {
+  if (process.platform === "win32") {
+    context.skip(
+      "symlink creation is not reliably available to unprivileged Windows CI"
+    );
+    return;
+  }
+  const dataRoot = await temporaryDataRoot(context);
   const target = path.join(dataRoot, "real");
   const linked = path.join(dataRoot, "linked");
   await mkdir(target);

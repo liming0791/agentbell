@@ -32,6 +32,7 @@ const checksumPattern = /^[a-f0-9]{64}$/;
 const sidecarSemverPattern =
   /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const maximumSidecarBytes = 1 << 20;
+const windowsFileBusyCodes = new Set(["EACCES", "EBUSY", "EPERM"]);
 const queueStates = ["pending", "inflight", "history", "dead"];
 const sidecarDefinitions = [
   {
@@ -617,19 +618,87 @@ async function atomicWrite(filePath, value, mode = 0o600) {
       if (!["EACCES", "EEXIST", "ENOTEMPTY", "EPERM"].includes(error?.code)) {
         throw error;
       }
-      await rename(filePath, backupPath);
+      await renameAtomicEntry(filePath, backupPath);
       try {
         await rename(temporaryPath, filePath);
       } catch (replacementError) {
-        await rename(backupPath, filePath);
+        await renameAtomicEntry(backupPath, filePath);
         throw replacementError;
       }
-      await rm(backupPath, { force: true });
+      await removeAtomicResidue(backupPath);
     }
     await syncDirectory(directory);
   } finally {
     await rm(temporaryPath, { force: true });
-    await rm(backupPath, { force: true });
+    await removeAtomicResidue(backupPath);
+  }
+}
+
+async function renameAtomicEntry(
+  source,
+  destination,
+  { platform = process.platform, attempts = 25 } = {}
+) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await rename(source, destination);
+      return;
+    } catch (error) {
+      if (platform !== "win32" || !windowsFileBusyCodes.has(error?.code) ||
+          attempt === attempts - 1) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(
+        resolve,
+        Math.min(40 * (attempt + 1), 200)
+      ));
+    }
+  }
+}
+
+async function removeAtomicResidue(
+  filePath,
+  { platform = process.platform, attempts = 25 } = {}
+) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await rm(filePath, { force: true });
+      return;
+    } catch (error) {
+      if (platform !== "win32" || !windowsFileBusyCodes.has(error?.code) ||
+          attempt === attempts - 1) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(
+        resolve,
+        Math.min(40 * (attempt + 1), 200)
+      ));
+    }
+  }
+}
+
+async function cleanupStableWriteResidues(filePath, platform) {
+  const directory = path.dirname(filePath);
+  const escapedName = path.basename(filePath).replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&"
+  );
+  const residuePattern = new RegExp(
+    `^\\.${escapedName}\\.\\d+\\.[a-f0-9]{16}\\.tmp\\.previous$`
+  );
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  for (const entry of entries) {
+    if (entry.isFile() && residuePattern.test(entry.name)) {
+      await removeAtomicResidue(path.join(directory, entry.name), { platform });
+    }
   }
 }
 
@@ -956,14 +1025,15 @@ async function defaultRestartService({ corePath }) {
 export function serviceTransitionAction({
   operation,
   active,
-  compensation = false
+  compensation = false,
+  serviceQuiesced = false
 }) {
   if (operation === "repair") {
     return "install";
   }
   if (operation === "upgrade") {
     if (compensation) {
-      return active === null ? "install" : "restart";
+      return active === null || serviceQuiesced ? "install" : "restart";
     }
     return "install";
   }
@@ -978,7 +1048,8 @@ export async function runUpgradeServiceTransition(
     operation: request.operation || "upgrade",
     active: request.active,
     previousActive: request.previousActive,
-    compensation: request.compensation
+    compensation: request.compensation,
+    serviceQuiesced: request.serviceQuiesced
   });
   const code = await execute(
     request.corePath,
@@ -994,6 +1065,26 @@ export async function runUpgradeServiceTransition(
 
 async function defaultUpgradeService(request) {
   await runUpgradeServiceTransition(request);
+}
+
+export async function runUpgradeServiceQuiesce(
+  request,
+  execute = runExecutable
+) {
+  const code = await execute(
+    request.corePath,
+    ["service", "uninstall", "--json"],
+    { stdin: "ignore", stdout: "ignore", stderr: "inherit" }
+  );
+  if (code !== 0) {
+    throw new Error(
+      `AgentBell service uninstall exited with code ${code}.`
+    );
+  }
+}
+
+async function defaultUpgradeServiceQuiesce(request) {
+  await runUpgradeServiceQuiesce(request);
 }
 
 function runExecutable(executable, args, stdio) {
@@ -1528,11 +1619,14 @@ async function compensateUpgrade({
   serviceBridgePath,
   previousServiceBridge,
   serviceBridgeChanged,
+  serviceQuiesced,
   activeWritten,
   installedNew,
   corePath,
   operation = "upgrade",
-  restartService
+  restartService,
+  quiesceService,
+  writeStableBridge
 }) {
   const compensation = newCompensation();
   const errors = [];
@@ -1545,12 +1639,25 @@ async function compensateUpgrade({
       errors.push(error);
     }
   };
+  if (serviceQuiesced && previousCorePath) {
+    await attempt("quiesce-attempted-service", async () => {
+      await quiesceService({
+        operation,
+        corePath: activeWritten && corePath ? corePath : previousCorePath,
+        active: activeWritten
+          ? { activeVersion: transaction.toVersion }
+          : previousActive,
+        previousActive,
+        compensation: true
+      });
+    });
+  }
   if (bridgeChanged) {
     await attempt("restore-bridge", async () => {
       if (previousBridge === null) {
         await rm(bridgePath, { force: true });
       } else {
-        await atomicWrite(bridgePath, previousBridge, 0o700);
+        await writeStableBridge(bridgePath, previousBridge, 0o700);
       }
     });
   }
@@ -1559,7 +1666,7 @@ async function compensateUpgrade({
       if (previousServiceBridge === null) {
         await rm(serviceBridgePath, { force: true });
       } else {
-        await atomicWrite(serviceBridgePath, previousServiceBridge, 0o700);
+        await writeStableBridge(serviceBridgePath, previousServiceBridge, 0o700);
       }
     });
   }
@@ -1579,14 +1686,15 @@ async function compensateUpgrade({
       activeRestored = true;
     });
   }
-  if (activeWritten && previousCorePath && activeRestored) {
+  if ((activeWritten || serviceQuiesced) && previousCorePath && activeRestored) {
     await attempt("restart-previous-service", async () => {
       await restartService({
         operation,
         corePath: previousCorePath,
         bridgePath,
-        active: restoredActive,
-        compensation: true
+        active: restoredActive || previousActive,
+        compensation: true,
+        serviceQuiesced
       });
     });
   }
@@ -1625,6 +1733,8 @@ export async function upgrade({
   downloadBundle = defaultDownloadBundle,
   smokeCore = defaultSmokeCore,
   restartService = defaultUpgradeService,
+  quiesceService = defaultUpgradeServiceQuiesce,
+  writeStableBridge = atomicWrite,
   writeActive = async (filePath, state) => atomicJSON(filePath, state)
 }) {
   assertVersion(toVersion);
@@ -1705,6 +1815,7 @@ export async function upgrade({
   let serviceBridgePath = "";
   let previousServiceBridge = null;
   let serviceBridgeChanged = false;
+  let serviceQuiesced = false;
   let activeWritten = false;
   let attemptedGeneration = 0;
   let repairingSameVersion = false;
@@ -1857,11 +1968,26 @@ export async function upgrade({
     previousServiceBridge = target.serviceBridgeFileName
       ? await readOptional(serviceBridgePath)
       : previousBridge;
+    if (platform === "win32" && previousCorePath) {
+      serviceQuiesced = true;
+      await writeJournal(dataRoot, transaction, "quiescing-service");
+      await quiesceService({
+        operation: repairingSameVersion ? "repair" : "upgrade",
+        corePath: previousCorePath,
+        bridgePath,
+        active,
+        previousActive: active
+      });
+      await cleanupStableWriteResidues(bridgePath, platform);
+      if (target.serviceBridgeFileName) {
+        await cleanupStableWriteResidues(serviceBridgePath, platform);
+      }
+    }
     await writeJournal(dataRoot, transaction, "activating");
-    await atomicWrite(bridgePath, bundle.bridge, 0o700);
+    await writeStableBridge(bridgePath, bundle.bridge, 0o700);
     bridgeChanged = true;
     if (target.serviceBridgeFileName) {
-      await atomicWrite(serviceBridgePath, bundle.serviceBridge, 0o700);
+      await writeStableBridge(serviceBridgePath, bundle.serviceBridge, 0o700);
       serviceBridgeChanged = true;
     }
     const generation = active
@@ -1903,7 +2029,8 @@ export async function upgrade({
       corePath,
       bridgePath,
       active: nextActive,
-      previousActive: active
+      previousActive: active,
+      serviceQuiesced
     });
     await writeJournal(dataRoot, transaction, "committed");
     return {
@@ -1961,7 +2088,8 @@ export async function upgrade({
     }
     let compensationErrors = [];
     if (transaction && (
-      bridgeChanged || serviceBridgeChanged || activeWritten || installedNew
+      bridgeChanged || serviceBridgeChanged || serviceQuiesced ||
+      activeWritten || installedNew
     )) {
       const result = await compensateUpgrade({
         dataRoot,
@@ -1975,11 +2103,14 @@ export async function upgrade({
         serviceBridgePath,
         previousServiceBridge,
         serviceBridgeChanged,
+        serviceQuiesced,
         activeWritten,
         installedNew,
         corePath,
         operation: repairingSameVersion ? "repair" : "upgrade",
-        restartService
+        restartService,
+        quiesceService,
+        writeStableBridge
       });
       transaction.compensation = result.compensation;
       compensationErrors = result.errors;
@@ -1993,7 +2124,7 @@ export async function upgrade({
       await writeJournal(
         dataRoot,
         transaction,
-        bridgeChanged || serviceBridgeChanged || activeWritten
+        bridgeChanged || serviceBridgeChanged || serviceQuiesced || activeWritten
           ? compensationErrors.length === 0
             ? "rolled-back"
             : "compensation-failed"

@@ -11,7 +11,7 @@ AgentBell 是一个面向 Coding Agent CLI、IDE 和 Desktop Agent 的跨平台�
 审批提醒；完成通知继续使用 `Stop`。
 
 最新已发布版本为
-[`v0.3.0-rc.7`](https://github.com/liming0791/agentbell/releases/tag/v0.3.0-rc.7)
+[`v0.3.0-rc.10`](https://github.com/liming0791/agentbell/releases/tag/v0.3.0-rc.10)
 Technical Preview。该版本已包含 Go 单文件 Core、持久队列、七个 Adapter、
 `agentbell setup`、`agentbell test`、三平台用户服务及 M2 本地能力
 （见 [M1 验收记录](./docs/m1-setup-validation.md) 和
@@ -20,6 +20,9 @@ Technical Preview。该版本已包含 Go 单文件 Core、持久队列、七个
 `@liming0791/agentbell-cli` 与 `@liming0791/agentbell-hook-runtime`。RC6 修复 setup/test
 无法证明真实用户可见通知群的问题，并让 Windows 登录后台服务不再弹出常驻控制台；
 RC7 增加 Core/Bridge/Service 安装状态对账，可从 Bridge 或后台服务缺失的安装中自愈。
+RC8/RC9 修复 Windows Codex Hook 的 `cmd.exe /C` 命令兼容性并拆分无窗口后台 Service；
+RC10 在替换 Windows 稳定入口前安全停用旧任务，清理严格匹配的升级残留，并在失败时
+重新安装旧服务，避免运行中 EXE 导致 `EPERM`。
 仓库与 Release 均公开，npm bootstrap 可匿名下载原生 Core；Node.js Hook runtime
 仅保留为 M0 迁移期原型，不是正式 Hook 数据面。
 
@@ -104,7 +107,7 @@ agentbell adapter uninstall all [--dry-run]
 agentbell uninstall [--dry-run] [--json] [--delete-remote-credential --confirm-delete-remote-credential]
 ```
 
-RC7 包含 M2 的一次性绑定、完整 Channel 事务、stable Hook/Service bridge、
+RC10 包含 M2 的一次性绑定、完整 Channel 事务、stable Hook/Service bridge、
 `service restart`、Hook 冲突审计、受 sidecar/部分投递账本保护的 upgrade/rollback、
 `plugin verify` 与 Release keyless 插件签名，以及 relay pairing/ingress、远端
 metadata-only outbox、`remote test`、独立 Host connector registry、WSL/SSH/container
@@ -120,7 +123,7 @@ macOS 真实 M1 形态的 LaunchAgent 也已备份后迁移到 stable bridge，�
 ## 目标体验
 
 ```bash
-npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.7
+npx @liming0791/agentbell-cli@next install-core --version 0.3.0-rc.10
 npx @liming0791/agentbell-cli@next setup
 ```
 
