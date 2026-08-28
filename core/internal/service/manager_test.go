@@ -16,9 +16,10 @@ type managerCall struct {
 }
 
 type fakeManagerRunner struct {
-	calls   []managerCall
-	errs    map[string]error
-	outputs map[string][]byte
+	calls           []managerCall
+	errs            map[string]error
+	outputs         map[string][]byte
+	outputSequences map[string][][]byte
 }
 
 func (runner *fakeManagerRunner) Run(
@@ -30,6 +31,10 @@ func (runner *fakeManagerRunner) Run(
 	key := name + " " + strings.Join(args, " ")
 	if err := runner.errs[key]; err != nil {
 		return []byte("fake failure"), err
+	}
+	if sequence := runner.outputSequences[key]; len(sequence) > 0 {
+		runner.outputSequences[key] = sequence[1:]
+		return sequence[0], nil
 	}
 	if output, ok := runner.outputs[key]; ok {
 		return output, nil
@@ -346,6 +351,9 @@ func TestWindowsTaskManagerInstallStatusAndUninstall(t *testing.T) {
 		},
 		outputs: map[string][]byte{
 			windowsStateCallKey(): []byte("Running\r\n"),
+		},
+		outputSequences: map[string][][]byte{
+			windowsStateCallKey(): {[]byte("Ready\r\n"), []byte("Running\r\n")},
 		},
 	}
 	manager := &Manager{

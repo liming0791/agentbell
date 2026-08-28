@@ -11,9 +11,10 @@ import (
 )
 
 type restartRunner struct {
-	calls   []managerCall
-	errs    map[string]error
-	outputs map[string][]byte
+	calls           []managerCall
+	errs            map[string]error
+	outputs         map[string][]byte
+	outputSequences map[string][][]byte
 }
 
 func (runner *restartRunner) Run(
@@ -26,6 +27,10 @@ func (runner *restartRunner) Run(
 	key := callKeyForManager(call)
 	if err := runner.errs[key]; err != nil {
 		return runner.outputs[key], err
+	}
+	if sequence := runner.outputSequences[key]; len(sequence) > 0 {
+		runner.outputSequences[key] = sequence[1:]
+		return sequence[0], nil
 	}
 	if output, ok := runner.outputs[key]; ok {
 		return output, nil
@@ -245,9 +250,45 @@ func TestManagerRestartWindowsTaskAndVerifiesRunning(t *testing.T) {
 
 	runner.calls = nil
 	runner.outputs[windowsStateCallKey()] = []byte("Ready")
+	manager.windowsTaskStartAttempts = 2
 	if _, err := manager.Restart(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "verify") {
 		t.Fatalf("expected Windows verification error, got %v", err)
+	}
+}
+
+func TestManagerRestartWindowsTaskWaitsForRunning(t *testing.T) {
+	runner := &restartRunner{
+		errs: map[string]error{},
+		outputs: map[string][]byte{
+			windowsStateCallKey(): []byte("Running"),
+		},
+		outputSequences: map[string][][]byte{
+			windowsStateCallKey(): {[]byte("Ready"), []byte("Ready"), []byte("Running")},
+		},
+	}
+	manager := &Manager{
+		GOOS:                         "windows",
+		Executable:                   `C:\Program Files\AgentBell\agentbell.exe`,
+		HomeDir:                      `C:\Users\test`,
+		LogDir:                       `C:\Users\test\AppData\Local\AgentBell\logs`,
+		Runner:                       runner,
+		windowsTaskStartAttempts:     3,
+		windowsTaskStartPollInterval: 0,
+	}
+
+	result, err := manager.Restart(context.Background())
+	if err != nil || !result.Running {
+		t.Fatalf("Windows restart did not wait for Running: %#v err=%v", result, err)
+	}
+	stateCalls := 0
+	for _, call := range runner.calls {
+		if callKeyForManager(call) == windowsStateCallKey() {
+			stateCalls++
+		}
+	}
+	if stateCalls != 3 {
+		t.Fatalf("Windows restart state checks = %d, want 3", stateCalls)
 	}
 }
 
